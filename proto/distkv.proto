@@ -1,0 +1,221 @@
+syntax = "proto3";
+
+package distkv;
+
+option go_package = "./proto";
+
+// Main DistKV service: Client-facing API (what applications use)
+service DistKV {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+}
+
+// Internal node communication service
+service NodeService {
+  rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
+  rpc AntiEntropy(AntiEntropyRequest) returns (AntiEntropyResponse);
+  rpc Gossip(GossipMessage) returns (GossipResponse);
+  rpc Handoff(HandoffRequest) returns (HandoffResponse);
+}
+
+// Admin service for cluster management
+service AdminService {
+  rpc AddNode(AddNodeRequest) returns (AddNodeResponse);
+  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
+  rpc Rebalance(RebalanceRequest) returns (RebalanceResponse);
+  rpc GetClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
+}
+
+// Consistency levels
+enum ConsistencyLevel {
+  ONE = 0;      // Only need 1 node to confirm
+  QUORUM = 1;   // Need majority of nodes to confirm
+  ALL = 2;      // Need all nodes to confirm
+}
+
+// Vector clock for conflict resolution: Tracks the order of events across different nodes
+message VectorClock {
+  map<string, uint64> clocks = 1;  // node_id -> counter
+}
+
+// Client API messages
+message PutRequest {
+  string key = 1;
+  bytes value = 2;
+  ConsistencyLevel consistency_level = 3;  // How strict to be about consistency
+  VectorClock vector_clock = 4;      // For conflict resolution
+}
+
+message PutResponse {
+  bool success = 1;
+  string error_message = 2;
+  VectorClock vector_clock = 3;
+}
+
+message GetRequest {
+  string key = 1;
+  ConsistencyLevel consistency_level = 2;
+}
+
+message GetResponse {
+  bytes value = 1;
+  bool found = 2;
+  VectorClock vector_clock = 3;
+  string error_message = 4;
+}
+
+message DeleteRequest {
+  string key = 1;
+  ConsistencyLevel consistency_level = 2;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message BatchPutRequest {
+  map<string, bytes> items = 1;
+  ConsistencyLevel consistency_level = 2;
+}
+
+message BatchPutResponse {
+  bool success = 1;
+  string error_message = 2;
+  repeated string failed_keys = 3;
+}
+
+// Internal replication messages
+message ReplicateRequest {
+  string key = 1;           // What key to replicate
+  bytes value = 2;          // The actual data
+  VectorClock vector_clock = 3;  // Version information
+  bool is_delete = 4;       // Is this a deletion?
+}
+
+message ReplicateResponse {
+  bool success = 1;
+  string error_message = 2;
+  VectorClock vector_clock = 3;
+}
+
+// Anti-entropy repair messages
+message MerkleNode {
+  string hash = 1;
+  repeated MerkleNode children = 2;
+}
+
+message AntiEntropyRequest {
+  string key_range_start = 1;
+  string key_range_end = 2;
+  MerkleNode merkle_tree = 3;
+}
+
+message AntiEntropyResponse {
+  repeated KeyValue missing_keys = 1;
+  repeated KeyValue conflicted_keys = 2;
+}
+
+message KeyValue {
+  string key = 1;
+  bytes value = 2;
+  VectorClock vector_clock = 3;
+  bool is_deleted = 4;
+}
+
+// Gossip protocol messages
+message NodeInfo {
+  string node_id = 1;
+  string address = 2;
+  uint64 heartbeat_counter = 3;
+  int64 last_seen = 4;
+  NodeStatus status = 5;
+}
+
+enum NodeStatus {
+  ALIVE = 0;
+  SUSPECT = 1;
+  DEAD = 2;
+}
+
+message GossipMessage {
+  string sender_id = 1;               // Who sent this message
+  repeated NodeInfo node_updates = 2; // Information about other nodes
+}
+
+message GossipResponse {
+  repeated NodeInfo node_updates = 1;
+}
+
+// Hinted handoff messages
+message HintedWrite {
+  string target_node = 1;
+  string key = 2;
+  bytes value = 3;
+  VectorClock vector_clock = 4;
+  int64 timestamp = 5;
+  bool is_delete = 6;
+}
+
+message HandoffRequest {
+  repeated HintedWrite writes = 1;
+}
+
+message HandoffResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// Admin API messages
+message AddNodeRequest {
+  string node_address = 1;
+  int32 virtual_nodes = 2;
+}
+
+message AddNodeResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message RemoveNodeRequest {
+  string node_address = 1;
+}
+
+message RemoveNodeResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message RebalanceRequest {
+  bool force = 1;
+}
+
+message RebalanceResponse {
+  bool success = 1;
+  string error_message = 2;
+  int32 keys_moved = 3;
+}
+
+message ClusterStatusRequest {}
+
+message ClusterStatusResponse {
+  repeated NodeStatus nodes = 1;
+  ClusterHealth health = 2;
+  ClusterMetrics metrics = 3;
+}
+
+message ClusterHealth {
+  int32 total_nodes = 1;
+  int32 alive_nodes = 2;
+  int32 dead_nodes = 3;
+  double availability_percentage = 4;
+}
+
+message ClusterMetrics {
+  int64 total_keys = 1;
+  int64 total_requests = 2;
+  double avg_latency_ms = 3;
+  double qps = 4;
+}
