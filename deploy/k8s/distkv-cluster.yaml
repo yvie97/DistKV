@@ -1,0 +1,143 @@
+# Kubernetes deployment configuration for DistKV cluster
+# This creates a production-ready DistKV deployment on Kubernetes
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: distkv-config
+  namespace: distkv
+data:
+  replicas: "3"
+  read-quorum: "2"
+  write-quorum: "2"
+  virtual-nodes: "150"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: distkv-service
+  namespace: distkv
+  labels:
+    app: distkv
+spec:
+  selector:
+    app: distkv
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: distkv-headless
+  namespace: distkv
+  labels:
+    app: distkv
+spec:
+  selector:
+    app: distkv
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+  clusterIP: None
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: distkv
+  namespace: distkv
+spec:
+  serviceName: distkv-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: distkv
+  template:
+    metadata:
+      labels:
+        app: distkv
+    spec:
+      containers:
+      - name: distkv
+        image: distkv:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: ADDRESS
+          value: "0.0.0.0:8080"
+        - name: DATA_DIR
+          value: "/data"
+        - name: SEED_NODES
+          value: "distkv-0.distkv-headless.distkv.svc.cluster.local:8080"
+        command:
+        - "./distkv-server"
+        - "-node-id=$(NODE_ID)"
+        - "-address=$(ADDRESS)"
+        - "-data-dir=$(DATA_DIR)"
+        - "-seed-nodes=$(SEED_NODES)"
+        - "-replicas=3"
+        - "-read-quorum=2"
+        - "-write-quorum=2"
+        volumeMounts:
+        - name: distkv-storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - "./distkv-client"
+            - "-server=localhost:8080"
+            - "status"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - "./distkv-client"  
+            - "-server=localhost:8080"
+            - "status"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: distkv-storage
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: distkv-external
+  namespace: distkv
+  labels:
+    app: distkv
+spec:
+  selector:
+    app: distkv
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: LoadBalancer

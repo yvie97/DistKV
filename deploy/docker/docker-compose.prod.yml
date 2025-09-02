@@ -1,0 +1,134 @@
+# Production Docker Compose configuration for DistKV
+# This configuration is optimized for production deployment
+
+version: '3.8'
+
+services:
+  # Load balancer
+  nginx:
+    image: nginx:alpine
+    container_name: distkv-lb
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    depends_on:
+      - distkv-node1
+      - distkv-node2
+      - distkv-node3
+    restart: unless-stopped
+
+  # Node 1
+  distkv-node1:
+    image: distkv:${VERSION:-latest}
+    container_name: distkv-node1
+    hostname: distkv-node1
+    environment:
+      - NODE_ID=prod-node1
+      - ADDRESS=0.0.0.0:8080
+      - DATA_DIR=/data
+      - REPLICAS=3
+      - READ_QUORUM=2
+      - WRITE_QUORUM=2
+    volumes:
+      - /var/lib/distkv/node1:/data
+      - /var/log/distkv:/var/log/distkv
+    command: [
+      "./distkv-server", 
+      "-node-id=prod-node1",
+      "-address=0.0.0.0:8080",
+      "-data-dir=/data",
+      "-replicas=3",
+      "-read-quorum=2", 
+      "-write-quorum=2"
+    ]
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # Additional nodes...
+  distkv-node2:
+    image: distkv:${VERSION:-latest}
+    container_name: distkv-node2
+    hostname: distkv-node2
+    environment:
+      - NODE_ID=prod-node2
+      - ADDRESS=0.0.0.0:8080
+      - DATA_DIR=/data
+    volumes:
+      - /var/lib/distkv/node2:/data
+      - /var/log/distkv:/var/log/distkv
+    command: [
+      "./distkv-server",
+      "-node-id=prod-node2", 
+      "-address=0.0.0.0:8080",
+      "-data-dir=/data",
+      "-seed-nodes=distkv-node1:8080"
+    ]
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  distkv-node3:
+    image: distkv:${VERSION:-latest}
+    container_name: distkv-node3
+    hostname: distkv-node3
+    environment:
+      - NODE_ID=prod-node3
+      - ADDRESS=0.0.0.0:8080
+      - DATA_DIR=/data
+    volumes:
+      - /var/lib/distkv/node3:/data
+      - /var/log/distkv:/var/log/distkv
+    command: [
+      "./distkv-server",
+      "-node-id=prod-node3",
+      "-address=0.0.0.0:8080", 
+      "-data-dir=/data",
+      "-seed-nodes=distkv-node1:8080"
+    ]
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: distkv-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: distkv-grafana  
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    external: true
+    name: distkv-prod
