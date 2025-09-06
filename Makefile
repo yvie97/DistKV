@@ -10,9 +10,14 @@ GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 PROTOC=protoc
 
-# Binary names
-SERVER_BINARY=distkv-server
-CLIENT_BINARY=distkv-client
+# Binary names (with .exe extension for Windows)
+ifeq ($(OS),Windows_NT)
+	SERVER_BINARY=distkv-server.exe
+	CLIENT_BINARY=distkv-client.exe
+else
+	SERVER_BINARY=distkv-server
+	CLIENT_BINARY=distkv-client
+endif
 
 # Directories
 BUILD_DIR=build
@@ -33,10 +38,8 @@ proto: $(PROTO_GO_FILES)
 
 $(PROTO_DIR)/%.pb.go: $(PROTO_DIR)/%.proto
 	@echo "Generating protobuf files..."
-	$(PROTOC) --proto_path=$(PROTO_DIR) \
-		--go_out=$(PROTO_DIR) --go_opt=paths=source_relative \
-		--go-grpc_out=$(PROTO_DIR) --go-grpc_opt=paths=source_relative \
-		$<
+	@chmod +x scripts/generate-proto.sh
+	@./scripts/generate-proto.sh
 
 # Install dependencies
 deps:
@@ -84,22 +87,40 @@ run-client:
 	$(BUILD_DIR)/$(CLIENT_BINARY) help
 
 # Development cluster (3 nodes)
-dev-cluster:
+dev-cluster: build
 	@echo "Starting development cluster..."
-	@mkdir -p dev-data/node1 dev-data/node2 dev-data/node3
-	$(BUILD_DIR)/$(SERVER_BINARY) -node-id=node1 -address=localhost:8080 -data-dir=./dev-data/node1 &
-	sleep 2
-	$(BUILD_DIR)/$(SERVER_BINARY) -node-id=node2 -address=localhost:8081 -data-dir=./dev-data/node2 -seed-nodes=localhost:8080 &
-	sleep 2
-	$(BUILD_DIR)/$(SERVER_BINARY) -node-id=node3 -address=localhost:8082 -data-dir=./dev-data/node3 -seed-nodes=localhost:8080 &
+	@mkdir -p data1 data2 data3
+	@echo "Starting node1 on port 8080..."
+	start "DistKV Node1" $(BUILD_DIR)/$(SERVER_BINARY) --node-id=node1 --address=localhost:8080 --data-dir=data1
+	@timeout /t 3 > nul
+	@echo "Starting node2 on port 8081..."
+	start "DistKV Node2" $(BUILD_DIR)/$(SERVER_BINARY) --node-id=node2 --address=localhost:8081 --data-dir=data2 --seed-nodes=localhost:8080
+	@timeout /t 3 > nul  
+	@echo "Starting node3 on port 8082..."
+	start "DistKV Node3" $(BUILD_DIR)/$(SERVER_BINARY) --node-id=node3 --address=localhost:8082 --data-dir=data3 --seed-nodes=localhost:8080
 	@echo "Development cluster started on ports 8080, 8081, 8082"
+	@echo "Each node is running in a separate window"
 	@echo "To stop cluster: make stop-cluster"
 
 # Stop development cluster
 stop-cluster:
 	@echo "Stopping development cluster..."
+ifeq ($(OS),Windows_NT)
+	@taskkill /F /IM $(SERVER_BINARY) 2>nul || echo "No running nodes found"
+else
 	@pkill -f distkv-server || true
+endif
 	@echo "Development cluster stopped"
+
+# Test the development cluster
+test-cluster: client
+	@echo "Testing development cluster..."
+	@echo "Writing test data..."
+	$(BUILD_DIR)/$(CLIENT_BINARY) --server=localhost:8080 put test:cluster "make-dev-cluster-works"
+	@echo "Reading from different nodes..."
+	$(BUILD_DIR)/$(CLIENT_BINARY) --server=localhost:8081 get test:cluster
+	$(BUILD_DIR)/$(CLIENT_BINARY) --server=localhost:8082 get test:cluster
+	@echo "Cluster test completed successfully!"
 
 # Format code
 fmt:
@@ -152,6 +173,7 @@ help:
 	@echo "  run-client   - Run client with help"
 	@echo "  dev-cluster  - Start 3-node development cluster"
 	@echo "  stop-cluster - Stop development cluster"
+	@echo "  test-cluster - Test the development cluster"
 	@echo "  fmt          - Format Go code"
 	@echo "  lint         - Run code linters"
 	@echo "  coverage     - Generate test coverage report"

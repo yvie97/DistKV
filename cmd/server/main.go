@@ -15,15 +15,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 
-	"distkv/pkg/consensus"
 	"distkv/pkg/gossip"
 	"distkv/pkg/partition"
 	"distkv/pkg/replication"
@@ -117,7 +116,7 @@ func parseFlags() *ServerConfig {
 		virtualNodes = flag.Int("virtual-nodes", 150, "Number of virtual nodes for consistent hashing")
 		
 		// Storage flags
-		memTableSize     = flag.Int("mem-table-size", 64*1024*1024, "MemTable size in bytes")
+		memTableSize     = flag.Int("mem-table-size", 1024, "MemTable size in bytes")
 		ssTableSize      = flag.Int64("sstable-size", 256*1024*1024, "SSTable size in bytes")
 		bloomFilterBits  = flag.Int("bloom-filter-bits", 10, "Bloom filter bits per key")
 		compactionThresh = flag.Int("compaction-threshold", 4, "Number of SSTables to trigger compaction")
@@ -127,10 +126,10 @@ func parseFlags() *ServerConfig {
 		readQuorum   = flag.Int("read-quorum", 2, "Read quorum size (R)")
 		writeQuorum  = flag.Int("write-quorum", 2, "Write quorum size (W)")
 		
-		// Gossip flags
+		// Gossip flags  
 		heartbeatInterval = flag.Duration("heartbeat-interval", 1*time.Second, "Heartbeat interval")
-		suspectTimeout    = flag.Duration("suspect-timeout", 5*time.Second, "Suspect timeout")
-		deadTimeout       = flag.Duration("dead-timeout", 30*time.Second, "Dead timeout")
+		suspectTimeout    = flag.Duration("suspect-timeout", 30*time.Second, "Suspect timeout")
+		deadTimeout       = flag.Duration("dead-timeout", 120*time.Second, "Dead timeout")
 		gossipInterval    = flag.Duration("gossip-interval", 1*time.Second, "Gossip interval")
 		gossipFanout      = flag.Int("gossip-fanout", 3, "Gossip fanout")
 	)
@@ -246,8 +245,8 @@ func NewDistKVServer(config *ServerConfig) (*DistKVServer, error) {
 	nodeSelector := NewNodeSelector(consistentHash, gossipManager)
 	replicaClient := NewReplicaClient()
 	
-	// Initialize quorum manager
-	quorumManager, err := replication.NewQuorumManager(config.QuorumConfig, nodeSelector, replicaClient)
+	// Initialize quorum manager with storage engine
+	quorumManager, err := replication.NewQuorumManager(config.QuorumConfig, nodeSelector, replicaClient, storageEngine)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create quorum manager: %v", err)
 	}
@@ -274,6 +273,9 @@ func (s *DistKVServer) Start() error {
 	
 	// Add self to consistent hash ring
 	s.consistentHash.AddNode(s.config.NodeID)
+	
+	// Add self to gossip manager (always mark self as alive)
+	s.gossipManager.AddNode(s.config.NodeID, s.config.Address)
 	
 	// Join cluster by connecting to seed nodes
 	if err := s.joinCluster(); err != nil {
@@ -316,27 +318,118 @@ func (s *DistKVServer) Stop() error {
 func (s *DistKVServer) joinCluster() error {
 	if len(s.config.SeedNodes) == 0 {
 		log.Printf("No seed nodes specified, starting as single-node cluster")
+		// Still add self to hash ring for single-node operation
+		s.replicaClient.UpdateNodeAddress(s.config.NodeID, s.config.Address)
 		return nil
 	}
 	
 	log.Printf("Attempting to join cluster via seed nodes: %v", s.config.SeedNodes)
 	
-	// In a real implementation, this would:
-	// 1. Connect to each seed node via gRPC
-	// 2. Request current cluster membership
-	// 3. Add discovered nodes to gossip manager
-	// 4. Add discovered nodes to consistent hash ring
-	
-	// For now, just add seed nodes to gossip and consistent hash
-	for _, seedNode := range s.config.SeedNodes {
-		// Extract node ID from address (simplified)
-		nodeID := fmt.Sprintf("seed-%s", strings.ReplaceAll(seedNode, ":", "-"))
-		
-		s.gossipManager.AddNode(nodeID, seedNode)
-		s.consistentHash.AddNode(nodeID)
+	// Try to contact each seed node to get cluster membership
+	var discoveredNodes []string
+	for _, seedAddress := range s.config.SeedNodes {
+		nodes, err := s.contactSeedNode(seedAddress)
+		if err != nil {
+			log.Printf("Failed to contact seed node %s: %v", seedAddress, err)
+			continue
+		}
+		discoveredNodes = append(discoveredNodes, nodes...)
 	}
 	
-	log.Printf("Added %d seed nodes to cluster", len(s.config.SeedNodes))
+	// Add discovered nodes to our systems
+	for _, nodeInfo := range discoveredNodes {
+		// Parse nodeInfo format: "nodeID@address"
+		parts := strings.Split(nodeInfo, "@")
+		if len(parts) != 2 {
+			continue
+		}
+		nodeID, address := parts[0], parts[1]
+		
+		// Add to gossip manager
+		s.gossipManager.AddNode(nodeID, address)
+		
+		// Add to consistent hash ring
+		s.consistentHash.AddNode(nodeID)
+		
+		// Update replica client with node address
+		s.replicaClient.UpdateNodeAddress(nodeID, address)
+		
+		log.Printf("Discovered and added node: %s at %s", nodeID, address)
+	}
+	
+	// Also add self to replica client for local operations
+	s.replicaClient.UpdateNodeAddress(s.config.NodeID, s.config.Address)
+	
+	// Announce ourselves to the cluster
+	for _, seedAddress := range s.config.SeedNodes {
+		if err := s.announceSelfToNode(seedAddress); err != nil {
+			log.Printf("Failed to announce to seed node %s: %v", seedAddress, err)
+		}
+	}
+	
+	log.Printf("Successfully joined cluster with %d total nodes", len(discoveredNodes)+1)
+	return nil
+}
+
+// contactSeedNode contacts a seed node to get current cluster membership
+func (s *DistKVServer) contactSeedNode(seedAddress string) ([]string, error) {
+	// Create gRPC connection to seed node
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	conn, err := grpc.DialContext(ctx, seedAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to seed node: %v", err)
+	}
+	defer conn.Close()
+	
+	// Get admin client
+	adminClient := proto.NewAdminServiceClient(conn)
+	
+	// Request cluster status
+	resp, err := adminClient.GetClusterStatus(ctx, &proto.ClusterStatusRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster status: %v", err)
+	}
+	
+	// Convert response to node list
+	var nodes []string
+	for _, node := range resp.Nodes {
+		nodeInfo := fmt.Sprintf("%s@%s", node.NodeId, node.Address)
+		nodes = append(nodes, nodeInfo)
+	}
+	
+	return nodes, nil
+}
+
+// announceSelfToNode announces this node to an existing cluster node
+func (s *DistKVServer) announceSelfToNode(targetAddress string) error {
+	// Create gRPC connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	conn, err := grpc.DialContext(ctx, targetAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return fmt.Errorf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+	
+	// Get admin service client
+	adminClient := proto.NewAdminServiceClient(conn)
+	
+	// Announce ourselves using AddNode
+	req := &proto.AddNodeRequest{
+		NodeId:       s.config.NodeID,
+		NodeAddress:  s.config.Address,
+		VirtualNodes: int32(s.config.VirtualNodes),
+	}
+	
+	_, err = adminClient.AddNode(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to announce: %v", err)
+	}
+	
+	log.Printf("Successfully announced self to %s", targetAddress)
 	return nil
 }
 

@@ -6,9 +6,14 @@ package gossip
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	pb "distkv/proto"
 )
 
 // Gossip manages the gossip protocol for failure detection in the cluster.
@@ -37,6 +42,10 @@ type Gossip struct {
 	
 	// started indicates if the gossip protocol is running
 	started bool
+	
+	// connections caches gRPC connections to other nodes
+	connections map[string]*grpc.ClientConn
+	connectionsMutex sync.RWMutex
 }
 
 // NodeEvent represents a change in node status.
@@ -66,6 +75,7 @@ func NewGossip(nodeID, address string, config *GossipConfig) *Gossip {
 		stopChan:       make(chan struct{}),
 		eventCallbacks: make([]NodeEventCallback, 0),
 		started:        false,
+		connections:    make(map[string]*grpc.ClientConn),
 	}
 }
 
@@ -103,6 +113,14 @@ func (g *Gossip) Stop() error {
 	
 	// Wait for background workers to finish
 	g.wg.Wait()
+	
+	// Close all gRPC connections
+	g.connectionsMutex.Lock()
+	for _, conn := range g.connections {
+		conn.Close()
+	}
+	g.connections = make(map[string]*grpc.ClientConn)
+	g.connectionsMutex.Unlock()
 	
 	return nil
 }
@@ -349,27 +367,43 @@ func (g *Gossip) checkNodeHealth() {
 
 // sendGossipMessages sends gossip messages to random nodes.
 func (g *Gossip) sendGossipMessages() {
-	// This is a simplified version - production would use actual network communication
-	// For now, we just simulate the selection of nodes to gossip with
-	
 	aliveNodes := g.GetAliveNodes()
 	if len(aliveNodes) <= 1 {
 		return // Only us or no one else alive
 	}
 	
-	// Select random nodes to gossip with (fanout)
-	fanout := g.config.GossipFanout
-	if fanout > len(aliveNodes)-1 {
-		fanout = len(aliveNodes) - 1
+	// Filter out local node
+	targetNodes := make([]*NodeInfo, 0)
+	for _, node := range aliveNodes {
+		if node.NodeID != g.localNode.NodeID {
+			targetNodes = append(targetNodes, node)
+		}
 	}
 	
-	// In a real implementation, this would:
-	// 1. Select random nodes from aliveNodes
-	// 2. Create gossip message with node information
-	// 3. Send gRPC message to selected nodes
-	// 4. Process their responses
+	if len(targetNodes) == 0 {
+		return
+	}
 	
-	// For now, we just track that gossip would occur
+	// Select random nodes to gossip with (fanout)
+	fanout := g.config.GossipFanout
+	if fanout > len(targetNodes) {
+		fanout = len(targetNodes)
+	}
+	
+	// Randomly select nodes to gossip with
+	rand.Shuffle(len(targetNodes), func(i, j int) {
+		targetNodes[i], targetNodes[j] = targetNodes[j], targetNodes[i]
+	})
+	
+	selectedNodes := targetNodes[:fanout]
+	
+	// Create gossip message with current node information
+	gossipMessage := g.createGossipMessage()
+	
+	// Send gossip messages concurrently
+	for _, targetNode := range selectedNodes {
+		go g.sendGossipToNode(targetNode, gossipMessage)
+	}
 }
 
 // notifyNodeEvent sends node status change events to registered callbacks.
@@ -391,4 +425,175 @@ func (g *Gossip) IsAlive() bool {
 	defer g.mutex.RUnlock()
 	
 	return g.started
+}
+
+// createGossipMessage creates a gossip message containing information about all known nodes.
+func (g *Gossip) createGossipMessage() *GossipMessageData {
+	g.mutex.RLock()
+	defer g.mutex.RUnlock()
+	
+	nodeUpdates := make([]*NodeInfo, 0, len(g.nodes))
+	for _, nodeInfo := range g.nodes {
+		nodeUpdates = append(nodeUpdates, nodeInfo.Copy())
+	}
+	
+	return &GossipMessageData{
+		SenderID:    g.localNode.NodeID,
+		NodeUpdates: nodeUpdates,
+	}
+}
+
+// sendGossipToNode sends a gossip message to a specific node and processes the response.
+func (g *Gossip) sendGossipToNode(targetNode *NodeInfo, message *GossipMessageData) {
+	conn, err := g.getConnection(targetNode.Address)
+	if err != nil {
+		log.Printf("Failed to get connection to node %s (%s): %v", 
+			targetNode.NodeID, targetNode.Address, err)
+		g.markNodeSuspect(targetNode.NodeID)
+		return
+	}
+	
+	client := pb.NewNodeServiceClient(conn)
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	// Convert our internal message to protobuf format
+	protoMessage := g.convertToProtoMessage(message)
+	
+	response, err := client.Gossip(ctx, protoMessage)
+	if err != nil {
+		log.Printf("Failed to gossip with node %s (%s): %v", 
+			targetNode.NodeID, targetNode.Address, err)
+		g.markNodeSuspect(targetNode.NodeID)
+		return
+	}
+	
+	// Process the response and update our node information
+	g.processGossipResponse(targetNode.NodeID, response)
+}
+
+// getConnection gets or creates a gRPC connection to the specified address.
+func (g *Gossip) getConnection(address string) (*grpc.ClientConn, error) {
+	g.connectionsMutex.RLock()
+	if conn, exists := g.connections[address]; exists {
+		g.connectionsMutex.RUnlock()
+		return conn, nil
+	}
+	g.connectionsMutex.RUnlock()
+	
+	// Need to create new connection
+	g.connectionsMutex.Lock()
+	defer g.connectionsMutex.Unlock()
+	
+	// Double-check in case another goroutine created it
+	if conn, exists := g.connections[address]; exists {
+		return conn, nil
+	}
+	
+	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, err
+	}
+	
+	g.connections[address] = conn
+	return conn, nil
+}
+
+// markNodeSuspect marks a node as suspect when we can't communicate with it.
+func (g *Gossip) markNodeSuspect(nodeID string) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	
+	if nodeInfo, exists := g.nodes[nodeID]; exists {
+		oldStatus := nodeInfo.GetStatus()
+		if oldStatus != NodeSuspect && oldStatus != NodeDead {
+			nodeInfo.SetStatus(NodeSuspect)
+			
+			g.notifyNodeEvent(NodeEvent{
+				NodeID:    nodeID,
+				Address:   nodeInfo.Address,
+				OldStatus: oldStatus,
+				NewStatus: NodeSuspect,
+				Timestamp: time.Now(),
+			})
+		}
+	}
+}
+
+// GossipMessageData represents the internal format of gossip messages.
+type GossipMessageData struct {
+	SenderID    string
+	NodeUpdates []*NodeInfo
+}
+
+// convertToProtoMessage converts internal gossip message to protobuf format.
+func (g *Gossip) convertToProtoMessage(message *GossipMessageData) *pb.GossipMessage {
+	protoNodeUpdates := make([]*pb.NodeInfo, 0, len(message.NodeUpdates))
+	
+	for _, nodeInfo := range message.NodeUpdates {
+		protoNodeInfo := &pb.NodeInfo{
+			NodeId:           nodeInfo.NodeID,
+			Address:          nodeInfo.Address,
+			HeartbeatCounter: nodeInfo.GetHeartbeatCounter(),
+			LastSeen:         nodeInfo.GetLastSeen(),
+			Status:           g.convertStatusToProto(nodeInfo.GetStatus()),
+		}
+		protoNodeUpdates = append(protoNodeUpdates, protoNodeInfo)
+	}
+	
+	return &pb.GossipMessage{
+		SenderId:    message.SenderID,
+		NodeUpdates: protoNodeUpdates,
+	}
+}
+
+// convertStatusToProto converts internal node status to protobuf enum.
+func (g *Gossip) convertStatusToProto(status NodeStatus) pb.NodeStatus {
+	switch status {
+	case NodeAlive:
+		return pb.NodeStatus_ALIVE
+	case NodeSuspect:
+		return pb.NodeStatus_SUSPECT
+	case NodeDead:
+		return pb.NodeStatus_DEAD
+	default:
+		return pb.NodeStatus_ALIVE
+	}
+}
+
+// processGossipResponse processes a gossip response and updates our node view.
+func (g *Gossip) processGossipResponse(senderID string, response *pb.GossipResponse) {
+	// Convert protobuf response back to internal format
+	nodeUpdates := make([]*NodeInfo, 0, len(response.NodeUpdates))
+	
+	for _, protoNodeInfo := range response.NodeUpdates {
+		internalStatus := g.convertStatusFromProto(protoNodeInfo.Status)
+		nodeInfo := &NodeInfo{
+			NodeID:           protoNodeInfo.NodeId,
+			Address:          protoNodeInfo.Address,
+			HeartbeatCounter: protoNodeInfo.HeartbeatCounter,
+			LastSeen:         protoNodeInfo.LastSeen,
+			Status:           internalStatus,
+			Version:          1, // We don't have version in proto, so set to 1
+		}
+		nodeUpdates = append(nodeUpdates, nodeInfo)
+	}
+	
+	// Process the updates using existing logic
+	g.ProcessGossipMessage(senderID, nodeUpdates)
+}
+
+// convertStatusFromProto converts protobuf node status to internal enum.
+func (g *Gossip) convertStatusFromProto(status pb.NodeStatus) NodeStatus {
+	switch status {
+	case pb.NodeStatus_ALIVE:
+		return NodeAlive
+	case pb.NodeStatus_SUSPECT:
+		return NodeSuspect  
+	case pb.NodeStatus_DEAD:
+		return NodeDead
+	default:
+		return NodeAlive
+	}
 }

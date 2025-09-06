@@ -46,7 +46,7 @@ type DistKVClient struct {
 
 func main() {
 	// Parse command line flags
-	config := parseFlags()
+	config, remainingArgs := parseFlags()
 	
 	// Create client
 	client, err := NewDistKVClient(config)
@@ -56,13 +56,13 @@ func main() {
 	defer client.Close()
 	
 	// Parse command and execute
-	if len(os.Args) < 2 {
+	if len(remainingArgs) < 1 {
 		printUsage()
 		os.Exit(1)
 	}
 	
-	command := os.Args[1]
-	args := os.Args[2:]
+	command := remainingArgs[0]
+	args := remainingArgs[1:]
 	
 	switch command {
 	case "put":
@@ -105,16 +105,17 @@ func main() {
 	}
 }
 
-// parseFlags parses command line arguments
-func parseFlags() *ClientConfig {
+// parseFlags parses command line arguments and returns config and remaining args
+func parseFlags() (*ClientConfig, []string) {
 	var (
 		serverAddr   = flag.String("server", "localhost:8080", "DistKV server address")
 		timeout      = flag.Duration("timeout", 5*time.Second, "Request timeout")
-		consistency  = flag.String("consistency", "quorum", "Consistency level (one, quorum, all)")
+		consistency  = flag.String("consistency", "one", "Consistency level (one, quorum, all)")
 	)
 	
-	// Parse flags but preserve original args for command parsing
-	flag.CommandLine.Parse(os.Args[1:])
+	// Parse flags and get remaining arguments
+	flag.Parse()
+	remainingArgs := flag.Args()
 	
 	// Convert consistency level
 	var consistencyLevel proto.ConsistencyLevel
@@ -126,14 +127,14 @@ func parseFlags() *ClientConfig {
 	case "all":
 		consistencyLevel = proto.ConsistencyLevel_ALL
 	default:
-		consistencyLevel = proto.ConsistencyLevel_QUORUM
+		consistencyLevel = proto.ConsistencyLevel_ONE
 	}
 	
 	return &ClientConfig{
 		ServerAddress:    *serverAddr,
 		Timeout:          *timeout,
 		ConsistencyLevel: consistencyLevel,
-	}
+	}, remainingArgs
 }
 
 // NewDistKVClient creates a new DistKV client

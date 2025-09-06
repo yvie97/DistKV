@@ -6,11 +6,9 @@ package chaos
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -506,12 +504,16 @@ func TestSplitBrainPrevention(t *testing.T) {
 	}
 	
 	// Both writes should fail (can't achieve W=2 quorum with only 2 nodes each)
-	respA2, err := clientA.Put(context.WithTimeout(ctx, 10*time.Second), putReqA)
+	ctxA, cancelA := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelA()
+	respA2, err := clientA.Put(ctxA, putReqA)
 	if err == nil && respA2.Success {
 		t.Error("Write to partition A should have failed due to insufficient quorum")
 	}
 	
-	respB2, err := clientB.Put(context.WithTimeout(ctx, 10*time.Second), putReqB)
+	ctxB, cancelB := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelB()
+	respB2, err := clientB.Put(ctxB, putReqB)
 	if err == nil && respB2.Success {
 		t.Error("Write to partition B should have failed due to insufficient quorum")
 	}
