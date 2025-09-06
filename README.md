@@ -23,7 +23,7 @@ DistKV is a highly available, scalable distributed key-value store inspired by A
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone <https://github.com/yvie97/DistKV.git>
 cd DistKV
 ```
 
