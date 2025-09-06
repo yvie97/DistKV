@@ -6,7 +6,6 @@ import (
 	"crypto/md5"
 	"fmt"
 	"sort"
-	"strconv"
 )
 
 // ConsistentHash represents a consistent hash ring for distributing data across nodes.

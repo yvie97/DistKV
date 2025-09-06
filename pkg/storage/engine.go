@@ -5,6 +5,7 @@ package storage
 import (
 	"distkv/pkg/consensus"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -90,9 +91,9 @@ func NewEngine(dataDir string, config *StorageConfig) (*Engine, error) {
 // This is the main write path for the LSM-tree.
 func (e *Engine) Put(key string, value []byte, vectorClock *consensus.VectorClock) error {
 	e.mutex.Lock()
-	defer e.mutex.Unlock()
 	
 	if e.closed {
+		e.mutex.Unlock()
 		return ErrStorageClosed
 	}
 	
@@ -102,15 +103,28 @@ func (e *Engine) Put(key string, value []byte, vectorClock *consensus.VectorCloc
 	// Add to active MemTable
 	if err := e.activeMemTable.Put(*entry); err != nil {
 		e.stats.WriteErrors++
+		e.mutex.Unlock()
 		return fmt.Errorf("failed to put entry: %v", err)
 	}
 	
 	// Update stats
 	e.stats.WriteCount++
 	
+	// Debug: Log current MemTable size
+	log.Printf("MemTable current size: %d bytes, threshold: %d bytes", e.activeMemTable.Size(), e.config.MemTableMaxSize)
+	
 	// Check if MemTable needs to be flushed
-	if e.activeMemTable.Size() >= int64(e.config.MemTableMaxSize) {
-		e.triggerFlush()
+	needsFlush := e.activeMemTable.Size() >= int64(e.config.MemTableMaxSize)
+	if needsFlush {
+		log.Printf("MemTable size %d >= threshold %d, flushing to disk", e.activeMemTable.Size(), e.config.MemTableMaxSize)
+	}
+	
+	// Release the mutex before flushing to avoid deadlock
+	e.mutex.Unlock()
+	
+	if needsFlush {
+		// For testing: force synchronous flush
+		e.performFlush()
 	}
 	
 	return nil
@@ -306,17 +320,23 @@ func (e *Engine) performFlush() {
 	
 	e.mutex.Unlock()
 	
+	// Create sstables subdirectory if it doesn't exist
+	sstablesDir := filepath.Join(e.dataDir, "sstables")
+	os.MkdirAll(sstablesDir, 0755)
+	
 	// Generate SSTable file path
 	timestamp := time.Now().UnixNano()
 	fileName := fmt.Sprintf("sstable_%d.db", timestamp)
-	filePath := filepath.Join(e.dataDir, fileName)
+	filePath := filepath.Join(sstablesDir, fileName)
 	
 	// Create SSTable from MemTable
+	log.Printf("Creating SSTable at path: %s", filePath)
 	sstable, err := CreateSSTable(flushingMemTable, filePath, e.config)
 	if err != nil {
-		// Log error in production code
+		log.Printf("Error creating SSTable: %v", err)
 		return
 	}
+	log.Printf("SSTable created successfully: %s", filePath)
 	
 	// Add SSTable to engine and remove from flushing list
 	e.mutex.Lock()

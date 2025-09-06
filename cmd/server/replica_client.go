@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -96,9 +97,12 @@ func (rc *ReplicaClient) WriteReplica(ctx context.Context, nodeID string, key st
 // ReadReplica reads a value from a specific replica node
 // This is called during quorum read operations
 func (rc *ReplicaClient) ReadReplica(ctx context.Context, nodeID string, key string) (*replication.ReplicaResponse, error) {
-	// Get gRPC client for the target node
-	client, err := rc.getDistKVClient(nodeID)
+	log.Printf("ReplicaClient.ReadReplica: attempting to read key '%s' from node %s", key, nodeID)
+	
+	// Get NodeService client for the target node (for inter-node communication)
+	client, err := rc.getNodeServiceClient(nodeID)
 	if err != nil {
+		log.Printf("ReplicaClient.ReadReplica: failed to get client for node %s: %v", nodeID, err)
 		return &replication.ReplicaResponse{
 			NodeID:  nodeID,
 			Success: false,
@@ -106,20 +110,22 @@ func (rc *ReplicaClient) ReadReplica(ctx context.Context, nodeID string, key str
 		}, err
 	}
 	
-	// Create get request
-	req := &proto.GetRequest{
-		Key:              key,
-		ConsistencyLevel: proto.ConsistencyLevel_ONE, // Single node read
+	// Create local get request (bypasses quorum)
+	req := &proto.LocalGetRequest{
+		Key: key,
 	}
 	
-	// Make the gRPC call
-	resp, err := client.Get(ctx, req)
+	// Make the gRPC call to LocalGet (avoids infinite recursion)
+	log.Printf("ReplicaClient.ReadReplica: making LocalGet gRPC call to node %s", nodeID)
+	resp, err := client.LocalGet(ctx, req)
 	if err != nil {
+		log.Printf("ReplicaClient.ReadReplica: gRPC call to node %s failed: %v", nodeID, err)
+		// Return failed response but don't return error - let quorum manager handle it
 		return &replication.ReplicaResponse{
 			NodeID:  nodeID,
 			Success: false,
 			Error:   fmt.Errorf("read failed from node %s: %v", nodeID, err),
-		}, err
+		}, nil // Return nil error so quorum manager continues with other nodes
 	}
 	
 	// Convert response
@@ -249,22 +255,5 @@ func parseError(errorMessage string) error {
 	return fmt.Errorf("%s", errorMessage)
 }
 
-// Helper functions for proto conversion (these would normally be in a shared package)
-
-func convertVectorClockToProto(vc *consensus.VectorClock) *proto.VectorClock {
-	if vc == nil {
-		return &proto.VectorClock{Clocks: make(map[string]uint64)}
-	}
-	
-	return &proto.VectorClock{
-		Clocks: vc.GetClocks(),
-	}
-}
-
-func convertVectorClockFromProto(protoVC *proto.VectorClock) *consensus.VectorClock {
-	if protoVC == nil {
-		return consensus.NewVectorClock()
-	}
-	
-	return consensus.NewVectorClockFromMap(protoVC.Clocks)
-}
+// Note: convertVectorClockToProto and convertVectorClockFromProto functions
+// are defined in services.go to avoid duplication

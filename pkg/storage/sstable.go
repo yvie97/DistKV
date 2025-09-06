@@ -78,6 +78,7 @@ func CreateSSTable(memTable *MemTable, filePath string, config *StorageConfig) (
 	bloomFilter := NewBloomFilter(memTable.Count(), config.BloomFilterBits)
 	var minKey, maxKey string
 	var entryCount int
+	var filePosition int64 = 0 // Track file position manually
 	checksum := crc32.NewIEEE()
 	
 	// Write entries from MemTable to SSTable
@@ -95,9 +96,8 @@ func CreateSSTable(memTable *MemTable, filePath string, config *StorageConfig) (
 			maxKey = entry.Key
 		}
 		
-		// Record current position for index
-		currentPos := writer.Size()
-		index[entry.Key] = int64(currentPos)
+		// Record current file position for index
+		index[entry.Key] = filePosition
 		
 		// Add key to bloom filter
 		bloomFilter.Add(entry.Key)
@@ -117,6 +117,9 @@ func CreateSSTable(memTable *MemTable, filePath string, config *StorageConfig) (
 		writer.Write(entryData)
 		checksum.Write(sizeBytes)
 		checksum.Write(entryData)
+		
+		// Update file position manually
+		filePosition += 4 + int64(len(entryData)) // 4 bytes for size + entry data
 		
 		entryCount++
 		iterator.Next()

@@ -4,13 +4,13 @@ DistKV is a highly available, scalable distributed key-value store inspired by A
 
 ## 🚀 Features
 
-- **High Availability**: 99.9%+ availability through data replication and failure detection
+- **High Availability**: 99.9%+ availability through data replication and gossip-based failure detection
 - **Horizontal Scalability**: Add nodes dynamically to scale throughput and storage
-- **Tunable Consistency**: Choose between strong consistency and high availability
-- **Sub-millisecond Latency**: Optimized read/write paths with intelligent caching
-- **LSM-tree Storage**: Write-optimized storage engine with compaction
-- **Failure Detection**: Gossip-based protocol for automatic node failure detection
-- **Consistent Hashing**: Minimal data movement when adding/removing nodes
+- **Tunable Consistency**: Configurable N/R/W quorum parameters for consistency vs availability trade-offs
+- **Persistent Storage**: LSM-tree storage engine with MemTables, SSTables, and compaction
+- **Gossip Protocol**: Complete network-based gossip implementation for cluster coordination and failure detection
+- **Consistent Hashing**: Virtual node-based partitioning with minimal data movement when scaling
+- **Vector Clocks**: Conflict detection and causality tracking for concurrent updates
 
 ## 📋 System Requirements
 
@@ -20,23 +20,58 @@ DistKV is a highly available, scalable distributed key-value store inspired by A
 
 ## 🛠️ Quick Start
 
-### 1. Clone and Build
+### 1. Clone the Repository
 
 ```bash
-# Clone the repository
 git clone <repository-url>
 cd DistKV
+```
 
-# Install dependencies and build
+### 2. Install Prerequisites
+
+**Windows Users:**
+```cmd
+# Automated build with prerequisite checks
+scripts\build.bat
+```
+
+**Linux/Mac Users:**
+```bash
+# Option 1: Automated installation
+./scripts/install-prerequisites.sh && make all
+
+# Option 2: Manual installation
+# - Go 1.19+: https://golang.org/dl/
+# - protoc: https://github.com/protocolbuffers/protobuf/releases
+# - make (usually pre-installed on Linux/Mac)
+```
+
+### 3. Build the Project
+
+**Using Make (Linux/Mac - Recommended):**
+```bash
 make all
+```
 
-# Or manually:
+**Using Build Scripts:**
+```bash
+# Linux/Mac
+./scripts/build.sh
+
+# Windows  
+scripts\build.bat
+```
+
+**Manual Build:**
+```bash
 go mod tidy
-protoc --proto_path=proto --go_out=proto --go-grpc_out=proto proto/*.proto
+./scripts/generate-proto.sh  # Generates proto/*.pb.go files
 make build
 ```
 
-### 2. Start a Single Node
+> **📝 Note**: The protobuf files (`proto/distkv.pb.go` and `proto/distkv_grpc.pb.go`) are auto-generated during build and required for compilation. They are not committed to version control.
+
+### 4. Start a Single Node
 
 ```bash
 # Start server
@@ -48,18 +83,38 @@ make build
 ./build/distkv-client status
 ```
 
-### 3. Start a 3-Node Cluster
+### 5. Start a 3-Node Development Cluster
 
+**Using Make (Linux/Mac):**
 ```bash
 # Start the cluster (runs in background)
 make dev-cluster
 
-# Use the client to interact with the cluster
-./build/distkv-client put key1 "value1"
-./build/distkv-client get key1
+# Test the cluster
+make test-cluster
 
 # Stop the cluster
 make stop-cluster
+```
+
+**Using Windows Batch Scripts:**
+```cmd
+# Start the cluster (opens 3 separate windows)
+scripts\dev-cluster.bat
+
+# Test the cluster
+scripts\test-cluster.bat
+
+# Stop the cluster
+scripts\stop-cluster.bat
+```
+
+**Manual Testing:**
+```bash
+# Use the client to interact with any node  
+./build/distkv-client --server=localhost:8080 put key1 "value1"
+./build/distkv-client --server=localhost:8081 get key1
+./build/distkv-client --server=localhost:8082 get key1
 ```
 
 ## 🏗️ Architecture
@@ -88,11 +143,11 @@ make stop-cluster
 
 ### Key Technologies
 
-- **Storage Engine**: LSM-tree with MemTables and SSTables
-- **Partitioning**: Consistent hashing with virtual nodes
-- **Replication**: Quorum-based consensus (N=3, R=2, W=2)
+- **Storage Engine**: LSM-tree with MemTables and SSTables with Bloom filters
+- **Partitioning**: Consistent hashing with configurable virtual nodes
+- **Replication**: Configurable quorum-based consensus (default: N=3, R=2, W=2)
 - **Conflict Resolution**: Vector clocks for causality tracking
-- **Failure Detection**: Gossip protocol with configurable timeouts
+- **Failure Detection**: Network-based gossip protocol with heartbeat monitoring
 - **Communication**: gRPC for high-performance inter-node communication
 
 ## 🔧 Configuration
@@ -204,9 +259,9 @@ time ./build/distkv-client get key500
 Health: 3 total nodes, 3 alive, 0 dead (100.0% availability)
 
 === Nodes ===
-  node1 (localhost:8080) - ALIVE - Last seen: 2024-01-15T10:30:45Z
-  node2 (localhost:8081) - ALIVE - Last seen: 2024-01-15T10:30:44Z
-  node3 (localhost:8082) - ALIVE - Last seen: 2024-01-15T10:30:43Z
+  node1 (localhost:8080) - ALIVE - Last seen: 2025-09-05T22:45:29-07:00
+  node2 (localhost:8081) - ALIVE - Last seen: 2025-09-05T22:45:28-07:00
+  node3 (localhost:8082) - ALIVE - Last seen: 2025-09-05T22:45:27-07:00
 
 === Metrics ===
 Total requests: 1543
@@ -232,65 +287,149 @@ docker-compose up -d
 
 ## 🔧 Development
 
-### Prerequisites
-```bash
-# Install development tools
-make install-tools
-
-# Install protoc (Protocol Buffers compiler)
-# On Ubuntu/Debian:
-sudo apt install -y protobuf-compiler
-
-# On macOS:
-brew install protobuf
-```
-
 ### Code Structure
 ```
 DistKV/
-├── cmd/                    # Application entry points
-│   ├── server/            # DistKV server
-│   └── client/            # Command-line client
-├── pkg/                   # Core packages
-│   ├── consensus/         # Vector clocks for conflict resolution
-│   ├── gossip/           # Failure detection and node discovery
-│   ├── partition/        # Consistent hashing implementation
-│   ├── replication/      # Quorum-based replication
-│   └── storage/          # LSM-tree storage engine
-├── proto/                # Protocol buffer definitions
-├── tests/                # Test suites
-│   ├── unit/            # Unit tests
-│   ├── integration/     # Integration tests
-│   └── chaos/           # Chaos engineering tests
-└── deploy/              # Deployment configurations
-    ├── docker/          # Docker configurations
-    └── k8s/             # Kubernetes manifests
+├── cmd/                         # Application entry points
+│   ├── server/                 # DistKV server implementation
+│   │   ├── main.go            # Server entry point and configuration
+│   │   ├── services.go        # gRPC service implementations
+│   │   ├── node_selector.go   # Node selection and routing logic
+│   │   └── replica_client.go  # Inter-node communication client
+│   └── client/                # Command-line client
+│       └── main.go            # Client CLI implementation
+├── pkg/                        # Core distributed systems packages
+│   ├── consensus/             # Vector clocks for conflict resolution
+│   │   └── vector_clock.go    # Causality tracking implementation
+│   ├── gossip/               # Network-based failure detection
+│   │   ├── gossip.go         # Gossip protocol implementation
+│   │   └── node_info.go      # Node health and metadata
+│   ├── partition/            # Data distribution
+│   │   └── consistent_hash.go # Consistent hashing with virtual nodes
+│   ├── replication/          # Quorum-based data replication
+│   │   └── quorum.go         # N/R/W quorum consensus implementation
+│   └── storage/              # LSM-tree storage engine
+│       ├── engine.go         # Main storage engine
+│       ├── memtable.go       # In-memory write buffer
+│       ├── sstable.go        # Sorted string table implementation
+│       ├── bloom_filter.go   # Probabilistic data structure
+│       ├── types.go          # Storage data types and interfaces
+│       └── errors.go         # Storage-specific error types
+├── proto/                      # Protocol buffer definitions
+│   ├── distkv.proto           # gRPC service and message definitions
+│   ├── distkv.pb.go          # Generated protobuf code (auto-generated)
+│   └── distkv_grpc.pb.go     # Generated gRPC code (auto-generated)
+├── scripts/                    # Build automation and utilities
+│   ├── build.bat             # Windows build script
+│   ├── build.sh              # Linux/Mac build script
+│   ├── dev-cluster.bat       # Windows cluster startup
+│   ├── stop-cluster.bat      # Windows cluster shutdown
+│   ├── test-cluster.bat      # Windows cluster testing
+│   ├── generate-proto.sh     # Protobuf code generation
+│   └── install-prerequisites.sh # Dependency installation
+├── tests/                      # Comprehensive test suites
+│   ├── unit/                 # Unit tests for individual components
+│   ├── integration/          # Multi-node integration tests
+│   └── chaos/                # Fault injection and chaos testing
+├── deploy/                     # Production deployment configurations
+│   ├── docker/               # Docker deployment files
+│   └── k8s/                  # Kubernetes manifests and configs
+├── docs/                       # Additional documentation
+│   ├── api.md               # API documentation
+│   └── operations.md        # Operational guides
+├── Dockerfile                  # Container build configuration
+├── docker-compose.yml          # Multi-node Docker deployment
+├── Makefile                    # Build automation for Unix systems
+├── kvstore-design-doc.md       # System design documentation
+└── go.mod                      # Go module dependencies
 ```
 
-### Adding New Features
-
-1. **Storage Features**: Modify `pkg/storage/`
-2. **Consensus Logic**: Update `pkg/consensus/`
-3. **Network Protocols**: Extend `proto/` definitions
-4. **Client Features**: Add to `cmd/client/`
 
 ### Code Quality
 ```bash
 make fmt      # Format code
 make lint     # Run linters
-make coverage # Generate coverage report
+make test     # Run test suite
 ```
+
+## 🔧 Troubleshooting
+
+### Build Issues
+
+**Problem**: `protoc: command not found`
+```bash
+# Linux/Ubuntu
+sudo apt install protobuf-compiler
+
+# macOS
+brew install protobuf
+
+# Windows
+# Download from https://github.com/protocolbuffers/protobuf/releases
+# Extract and add to PATH
+```
+
+**Problem**: `go: command not found`
+```bash
+# Install Go from https://golang.org/dl/
+# Add to PATH: export PATH=$PATH:/usr/local/go/bin
+```
+
+**Problem**: Missing `.pb.go` files
+```bash
+# Generate protobuf files manually
+./scripts/generate-proto.sh
+
+# Or build with make (generates automatically)
+make all
+```
+
+**Problem**: Permission denied on scripts (Linux/Mac)
+```bash
+chmod +x scripts/*.sh
+```
+
+### Runtime Issues
+
+**Problem**: `bind: address already in use`
+```bash
+# Check what's using the port
+lsof -i :8080
+
+# Use different port
+./build/distkv-server -address=localhost:8081
+```
+
+**Problem**: `connection refused` from client
+```bash
+# Ensure server is running
+./build/distkv-client status
+
+# Check server logs for errors
+./build/distkv-server --node-id=debug-node --address=localhost:8080 --data-dir=debug-data
+```
+
+### Common Questions
+
+**Q: Why are `.pb.go` files not in the repository?**  
+A: These are auto-generated from `.proto` files during build. This keeps the repo clean and ensures compatibility.
+
+**Q: Which consistency level should I use?**  
+A: For learning: `quorum` (default). For production: depends on your CAP theorem requirements.
+
+**Q: Can I run this in production?**  
+A: This implementation includes production-grade features like persistent storage, replication, and failure detection. However, it's designed for learning distributed systems concepts. For production workloads, consider battle-tested solutions like Cassandra, DynamoDB, or ScyllaDB.
 
 ## 📖 Learning Resources
 
 This implementation demonstrates key distributed systems concepts:
 
-- **CAP Theorem**: Choose consistency vs. availability
-- **Consistent Hashing**: Minimize data movement during scaling
-- **Vector Clocks**: Track causality without global coordination
-- **Quorum Consensus**: Balance consistency and availability
-- **Gossip Protocols**: Efficient failure detection
-- **LSM-trees**: Write-optimized storage for high throughput
+- **CAP Theorem**: Choose consistency vs. availability with configurable quorum parameters
+- **Consistent Hashing**: Minimize data movement during scaling with virtual nodes
+- **Vector Clocks**: Track causality without global coordination for conflict resolution
+- **Quorum Consensus**: Balance consistency and availability with N/R/W configuration
+- **Gossip Protocols**: Network-based failure detection and cluster coordination
+- **LSM-trees**: Write-optimized storage with MemTables, SSTables, and compaction
 
 ## 🤝 Contributing
 
@@ -300,9 +439,6 @@ This implementation demonstrates key distributed systems concepts:
 4. Ensure all tests pass: `make test`
 5. Submit a pull request
 
-## 📜 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## 🙏 Acknowledgments
 
@@ -313,4 +449,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-**Note**: This is an educational implementation demonstrating distributed systems concepts. For production use, consider established solutions like Apache Cassandra, Amazon DynamoDB, or ScyllaDB.
+**Note**: This is a feature-complete implementation demonstrating distributed systems concepts with production-grade components. For enterprise production use, consider battle-tested solutions like Apache Cassandra, Amazon DynamoDB, or ScyllaDB.

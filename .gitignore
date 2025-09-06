@@ -1,0 +1,47 @@
+# Binaries
+build/
+*.exe
+*.exe~
+
+# Data directories (created during runtime/testing)
+data*/
+*.db
+*.wal
+*.sst
+
+# Go build artifacts
+vendor/
+*.test
+*.prof
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Generated protobuf files (auto-generated during build)
+proto/*.pb.go
+
+# Test coverage files
+coverage.out
+*.cover
+
+# Environment files
+.env
+.env.local

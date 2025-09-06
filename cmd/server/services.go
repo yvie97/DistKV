@@ -12,6 +12,7 @@ import (
 	"distkv/pkg/consensus"
 	"distkv/pkg/gossip"
 	"distkv/pkg/replication"
+	"distkv/pkg/storage"
 	"distkv/proto"
 )
 
@@ -155,6 +156,40 @@ type NodeServiceImpl struct {
 	server *DistKVServer
 }
 
+// LocalGet performs a local-only read operation (bypasses quorum)
+// This is used for inter-node replication reads to avoid infinite recursion
+func (s *NodeServiceImpl) LocalGet(ctx context.Context, req *proto.LocalGetRequest) (*proto.LocalGetResponse, error) {
+	// Read directly from local storage engine (bypass quorum manager)
+	entry, err := s.server.storageEngine.Get(req.Key)
+	if err != nil {
+		if err == storage.ErrKeyNotFound {
+			return &proto.LocalGetResponse{
+				Found:        false,
+				ErrorMessage: "",
+			}, nil
+		}
+		return &proto.LocalGetResponse{
+			Found:        false,
+			ErrorMessage: err.Error(),
+		}, nil
+	}
+	
+	// Handle tombstone entries
+	if entry != nil && entry.Deleted {
+		return &proto.LocalGetResponse{
+			Found:        false,
+			VectorClock:  convertVectorClockToProto(entry.VectorClock),
+			ErrorMessage: "",
+		}, nil
+	}
+	
+	return &proto.LocalGetResponse{
+		Value:       entry.Value,
+		Found:       true,
+		VectorClock: convertVectorClockToProto(entry.VectorClock),
+	}, nil
+}
+
 // Replicate handles replication requests from other nodes
 func (s *NodeServiceImpl) Replicate(ctx context.Context, req *proto.ReplicateRequest) (*proto.ReplicateResponse, error) {
 	// Convert vector clock
@@ -237,8 +272,8 @@ type AdminServiceImpl struct {
 
 // AddNode adds a new node to the cluster
 func (s *AdminServiceImpl) AddNode(ctx context.Context, req *proto.AddNodeRequest) (*proto.AddNodeResponse, error) {
-	// Generate node ID from address
-	nodeID := fmt.Sprintf("node-%s", req.NodeAddress)
+	// Use the node ID provided by the joining node
+	nodeID := req.NodeId
 	
 	// Add to gossip manager
 	s.server.gossipManager.AddNode(nodeID, req.NodeAddress)
@@ -292,12 +327,12 @@ func (s *AdminServiceImpl) GetClusterStatus(ctx context.Context, req *proto.Clus
 	nodes := s.server.gossipManager.GetNodes()
 	
 	// Convert to proto format and count statuses
-	var protoNodes []*proto.NodeStatus
+	var protoNodes []*proto.NodeStatusInfo
 	var aliveCount, deadCount int
 	
 	for nodeID, nodeInfo := range nodes {
 		status := convertNodeStatusToProto(nodeInfo.GetStatus())
-		protoNode := &proto.NodeStatus{
+		protoNode := &proto.NodeStatusInfo{
 			NodeId:   nodeID,
 			Address:  nodeInfo.Address,
 			Status:   status,
