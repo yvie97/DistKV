@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 )
 
@@ -240,18 +239,7 @@ func (sst *SSTable) Get(key string) (*Entry, error) {
 
 // Iterator returns an iterator to scan all entries in the SSTable.
 func (sst *SSTable) Iterator() (Iterator, error) {
-	// Create sorted list of keys for iteration
-	keys := make([]string, 0, len(sst.index))
-	for key := range sst.index {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	
-	return &SSTableIterator{
-		sstable:  sst,
-		keys:     keys,
-		position: 0,
-	}, nil
+	return NewSSTableIterator(sst), nil
 }
 
 // Close closes the SSTable file handle.
@@ -277,57 +265,6 @@ func (sst *SSTable) KeyRange() (string, string) {
 	return sst.minKey, sst.maxKey
 }
 
-// SSTableIterator implements Iterator interface for SSTable.
-type SSTableIterator struct {
-	sstable  *SSTable
-	keys     []string
-	position int
-	current  *Entry
-}
-
-// Valid returns true if the iterator points to a valid entry.
-func (it *SSTableIterator) Valid() bool {
-	return it.position >= 0 && it.position < len(it.keys)
-}
-
-// Key returns the current key.
-func (it *SSTableIterator) Key() string {
-	if !it.Valid() {
-		return ""
-	}
-	return it.keys[it.position]
-}
-
-// Value returns the current entry.
-func (it *SSTableIterator) Value() *Entry {
-	if !it.Valid() {
-		return nil
-	}
-	
-	// Load entry if not already loaded
-	if it.current == nil {
-		key := it.keys[it.position]
-		entry, err := it.sstable.Get(key)
-		if err != nil {
-			return nil
-		}
-		it.current = entry
-	}
-	
-	return it.current
-}
-
-// Next advances the iterator to the next entry.
-func (it *SSTableIterator) Next() {
-	it.position++
-	it.current = nil // Reset current entry
-}
-
-// Close releases resources held by the iterator.
-func (it *SSTableIterator) Close() error {
-	// No resources to clean up for SSTable iterator
-	return nil
-}
 
 // Helper functions for serialization
 

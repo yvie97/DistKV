@@ -149,20 +149,29 @@ func (e *Engine) Get(key string) (*Entry, error) {
 	
 	// First check active MemTable
 	if entry := e.activeMemTable.Get(key); entry != nil {
+		if entry.Deleted {
+			return nil, ErrKeyNotFound // Tombstone found
+		}
 		return entry, nil
 	}
-	
+
 	// Check flushing MemTables
 	for _, memTable := range e.flushingMemTables {
 		if entry := memTable.Get(key); entry != nil {
+			if entry.Deleted {
+				return nil, ErrKeyNotFound // Tombstone found
+			}
 			return entry, nil
 		}
 	}
-	
+
 	// Check SSTables (newest first - more likely to have recent data)
 	for i := len(e.sstables) - 1; i >= 0; i-- {
 		entry, err := e.sstables[i].Get(key)
 		if err == nil {
+			if entry.Deleted {
+				return nil, ErrKeyNotFound // Tombstone found
+			}
 			return entry, nil
 		}
 		if err != ErrKeyNotFound {
@@ -206,9 +215,7 @@ func (e *Engine) Delete(key string, vectorClock *consensus.VectorClock) error {
 // Iterator returns an iterator that scans all key-value pairs.
 // This merges data from MemTables and SSTables in sorted order.
 func (e *Engine) Iterator() (Iterator, error) {
-	// This is a simplified implementation - production would use a merge iterator
-	// that efficiently combines multiple sorted sources
-	return nil, fmt.Errorf("iterator not implemented in this simplified version")
+	return NewEngineIterator(e)
 }
 
 // Stats returns current storage engine statistics.
@@ -358,27 +365,129 @@ func (e *Engine) performFlush() {
 }
 
 // performCompaction merges multiple SSTables into fewer, larger files.
+// This is essential for maintaining good read performance in an LSM-tree.
 func (e *Engine) performCompaction() {
-	// Simplified compaction - production would be more sophisticated
 	e.mutex.Lock()
+
+	// Check if compaction is needed
 	if len(e.sstables) < e.config.CompactionThreshold {
 		e.mutex.Unlock()
 		return
 	}
+
+	log.Printf("Starting compaction: %d SSTables found, threshold: %d",
+		len(e.sstables), e.config.CompactionThreshold)
+
+	// Select SSTables for compaction (simple strategy: compact all)
+	// In production, this would use level-based or size-tiered compaction
+	tablesToCompact := make([]*SSTable, len(e.sstables))
+	copy(tablesToCompact, e.sstables)
+
 	e.mutex.Unlock()
-	
-	// In a real implementation, this would:
-	// 1. Select SSTables for compaction
-	// 2. Merge them in sorted order
-	// 3. Remove tombstones and duplicate keys
-	// 4. Create new larger SSTables
-	// 5. Delete old SSTables
-	// 6. Update engine state atomically
-	
-	// For now, just update compaction counter
+
+	// Perform compaction without holding the main lock
+	newSSTable, err := e.compactSSTables(tablesToCompact)
+	if err != nil {
+		log.Printf("Compaction failed: %v", err)
+		return
+	}
+
+	// Atomically update the engine state
 	e.mutex.Lock()
+	defer e.mutex.Unlock()
+
+	// Replace old SSTables with the new one
+	oldSSTables := e.sstables
+	e.sstables = []*SSTable{newSSTable}
+
+	// Update stats
 	e.stats.CompactionCount++
-	e.mutex.Unlock()
+
+	log.Printf("Compaction completed: %d SSTables merged into 1", len(oldSSTables))
+
+	// Close and delete old SSTable files
+	go e.cleanupOldSSTables(oldSSTables)
+}
+
+// compactSSTables merges multiple SSTables into a single new SSTable.
+func (e *Engine) compactSSTables(tables []*SSTable) (*SSTable, error) {
+	if len(tables) == 0 {
+		return nil, fmt.Errorf("no SSTables to compact")
+	}
+
+	// Create iterators for all SSTables to be compacted
+	iterators := make([]Iterator, len(tables))
+	for i, table := range tables {
+		iterators[i] = NewSSTableIterator(table)
+	}
+
+	// Create merge iterator to process entries in sorted order
+	mergeIterator := NewMergeIterator(iterators)
+	defer mergeIterator.Close()
+
+	// Create temporary compacted SSTable
+	timestamp := time.Now().UnixNano()
+	compactedPath := filepath.Join(e.dataDir, "sstables", fmt.Sprintf("compacted_%d.db", timestamp))
+
+	// Create a temporary MemTable to collect compacted entries
+	tempMemTable := NewMemTable()
+
+	// Process all entries, removing tombstones and duplicates
+	processedCount := 0
+	tombstonesRemoved := 0
+
+	for mergeIterator.Valid() {
+		entry := mergeIterator.Value()
+
+		// Skip expired tombstones (garbage collection)
+		if entry.Deleted && entry.IsExpired(e.config.TombstoneTTL) {
+			tombstonesRemoved++
+			mergeIterator.Next()
+			continue
+		}
+
+		// Add entry to temporary MemTable
+		if err := tempMemTable.Put(*entry); err != nil {
+			return nil, fmt.Errorf("failed to add entry during compaction: %v", err)
+		}
+
+		processedCount++
+		mergeIterator.Next()
+	}
+
+	log.Printf("Compaction processed %d entries, removed %d expired tombstones",
+		processedCount, tombstonesRemoved)
+
+	// Create new SSTable from the compacted data
+	newSSTable, err := CreateSSTable(tempMemTable, compactedPath, e.config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create compacted SSTable: %v", err)
+	}
+
+	return newSSTable, nil
+}
+
+// cleanupOldSSTables closes and deletes old SSTable files after compaction.
+func (e *Engine) cleanupOldSSTables(oldTables []*SSTable) {
+	for _, table := range oldTables {
+		// Close the SSTable
+		if err := table.Close(); err != nil {
+			log.Printf("Error closing old SSTable: %v", err)
+		}
+
+		// Delete the file
+		if err := os.Remove(table.filePath); err != nil {
+			log.Printf("Error deleting old SSTable file %s: %v", table.filePath, err)
+		} else {
+			log.Printf("Deleted old SSTable file: %s", table.filePath)
+		}
+
+		// Delete metadata file if it exists
+		metadataPath := table.filePath + ".meta"
+		if err := os.Remove(metadataPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("Error deleting SSTable metadata file %s: %v", metadataPath, err)
+		}
+	}
 }
 
 // loadExistingSSTables scans the data directory and opens existing SSTables.

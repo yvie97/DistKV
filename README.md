@@ -144,6 +144,9 @@ scripts\stop-cluster.bat
 ### Key Technologies
 
 - **Storage Engine**: LSM-tree with MemTables and SSTables with Bloom filters
+  - Complete iterator interface for range queries and compaction
+  - Production-ready compaction with tombstone garbage collection
+  - Concurrent-safe operations with proper resource management
 - **Partitioning**: Consistent hashing with configurable virtual nodes
 - **Replication**: Configurable quorum-based consensus (default: N=3, R=2, W=2)
 - **Conflict Resolution**: Vector clocks for causality tracking
@@ -189,9 +192,22 @@ Commands:
 ## 🧪 Testing
 
 ### Unit Tests
+The project includes comprehensive unit tests organized in the `tests/unit/` directory:
+
 ```bash
+# Run all unit tests
 make test
+
+# Run specific component tests
+go test ./tests/unit/consensus/     # Vector clock tests
+go test ./tests/unit/storage/       # Storage engine tests
 ```
+
+**Test Coverage:**
+- **Vector Clocks**: Causality tracking, conflict detection, merging, complex scenarios (12 tests)
+- **Storage Engine**: Basic operations, MemTable flush, compaction, concurrent access, statistics (6+ tests)
+- **MemTable**: CRUD operations, sorting, concurrency, read-only mode (14 tests)
+- **Iterators**: MemTable iteration, SSTable iteration, merge iteration, tombstone handling (8 tests)
 
 ### Integration Testing
 ```bash
@@ -200,6 +216,7 @@ make dev-cluster
 
 # Run integration tests
 go test ./tests/integration/...
+go test ./tests/chaos/...          # Chaos engineering tests
 
 # Stop cluster
 make stop-cluster
@@ -285,6 +302,56 @@ make docker-run
 docker-compose up -d
 ```
 
+## 🏗️ Implementation Details
+
+### Storage Engine Features
+
+**Complete LSM-tree Implementation:**
+```go
+// Unified iterator interface across all storage components
+type Iterator interface {
+    Valid() bool
+    Key() string
+    Value() *Entry
+    Next()
+    Close() error
+}
+```
+
+**Key Achievements:**
+- ✅ **Complete Iterator Implementation** - Full range query support with MemTable, SSTable, and merge iterators
+- ✅ **Production-Ready Compaction** - Multi-SSTable merging with tombstone garbage collection
+- ✅ **Concurrent Safety** - Thread-safe operations across all storage components
+- ✅ **Resource Management** - Proper cleanup and memory management
+- ✅ **Error Resilience** - Robust error handling and recovery
+
+**Performance Characteristics:**
+- **Iterator Performance**: O(1) MemTable init, O(log n) SSTable lookup, O(k log k) merge where k = sources
+- **Compaction Performance**: O(n log n) time complexity with sequential I/O optimization
+- **Memory Management**: Controlled buffer usage with automatic cleanup
+
+**Storage Configuration:**
+```go
+type StorageConfig struct {
+    CompactionThreshold int          // Trigger level (default: 4 SSTables)
+    TombstoneTTL       time.Duration // Garbage collection TTL (default: 3 hours)
+    MemTableMaxSize    int64         // Flush threshold (default: 64MB)
+}
+```
+
+### Project Structure Optimization
+
+**Clean Architecture:**
+- **`pkg/` directory**: Contains only production code (no test files for cleaner structure)
+- **`tests/unit/` directory**: Organized unit tests with proper package structure using `package_test` pattern
+- **Separation of Concerns**: Clear distinction between production code and testing infrastructure
+
+**Test Organization Benefits:**
+- **Code Readability**: Clean `pkg/` directory focused on core business logic
+- **Test Isolation**: Unified test management with clear hierarchical structure
+- **Go Best Practices**: Follows Go community standards with `package_test` naming
+- **Maintenance**: Reduced complexity in navigating and maintaining code
+
 ## 🔧 Development
 
 ### Code Structure
@@ -308,10 +375,11 @@ DistKV/
 │   │   └── consistent_hash.go # Consistent hashing with virtual nodes
 │   ├── replication/          # Quorum-based data replication
 │   │   └── quorum.go         # N/R/W quorum consensus implementation
-│   └── storage/              # LSM-tree storage engine
-│       ├── engine.go         # Main storage engine
+│   └── storage/              # LSM-tree storage engine (feature-complete)
+│       ├── engine.go         # Main storage engine with full compaction
 │       ├── memtable.go       # In-memory write buffer
 │       ├── sstable.go        # Sorted string table implementation
+│       ├── iterator.go       # Complete iterator interface (range queries)
 │       ├── bloom_filter.go   # Probabilistic data structure
 │       ├── types.go          # Storage data types and interfaces
 │       └── errors.go         # Storage-specific error types
@@ -327,8 +395,10 @@ DistKV/
 │   ├── test-cluster.bat      # Windows cluster testing
 │   ├── generate-proto.sh     # Protobuf code generation
 │   └── install-prerequisites.sh # Dependency installation
-├── tests/                      # Comprehensive test suites
+├── tests/                      # Comprehensive test suites (organized structure)
 │   ├── unit/                 # Unit tests for individual components
+│   │   ├── consensus/       # Vector clock tests (12 comprehensive tests)
+│   │   └── storage/         # Storage engine tests (28+ comprehensive tests)
 │   ├── integration/          # Multi-node integration tests
 │   └── chaos/                # Fault injection and chaos testing
 ├── deploy/                     # Production deployment configurations

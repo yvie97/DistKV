@@ -141,15 +141,7 @@ func (mt *MemTable) IsReadOnly() bool {
 // Iterator returns an iterator to scan all entries in key order.
 // This is used when flushing the MemTable to an SSTable.
 func (mt *MemTable) Iterator() Iterator {
-	mt.mutex.RLock()
-	// Note: We don't unlock here because the iterator needs consistent view
-	// The iterator will unlock when closed
-	
-	return &MemTableIterator{
-		memTable: mt,
-		position: 0,
-		locked:   true,
-	}
+	return NewMemTableIterator(mt)
 }
 
 // insertSorted maintains the sorted order of data slice after insertion.
@@ -211,45 +203,3 @@ func (mt *MemTable) calculateEntrySize(entry *Entry) int64 {
 	return size
 }
 
-// MemTableIterator implements Iterator interface for MemTable.
-type MemTableIterator struct {
-	memTable *MemTable
-	position int
-	locked   bool  // Whether we're holding a read lock
-}
-
-// Valid returns true if the iterator points to a valid entry.
-func (it *MemTableIterator) Valid() bool {
-	return it.position >= 0 && it.position < len(it.memTable.data)
-}
-
-// Key returns the current key.
-func (it *MemTableIterator) Key() string {
-	if !it.Valid() {
-		return ""
-	}
-	return it.memTable.data[it.position].Key
-}
-
-// Value returns the current entry.
-func (it *MemTableIterator) Value() *Entry {
-	if !it.Valid() {
-		return nil
-	}
-	entry := it.memTable.data[it.position]
-	return &entry
-}
-
-// Next advances the iterator to the next entry.
-func (it *MemTableIterator) Next() {
-	it.position++
-}
-
-// Close releases the read lock held by the iterator.
-func (it *MemTableIterator) Close() error {
-	if it.locked {
-		it.memTable.mutex.RUnlock()
-		it.locked = false
-	}
-	return nil
-}
