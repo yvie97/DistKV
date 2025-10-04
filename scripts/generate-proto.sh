@@ -21,6 +21,9 @@ echo "Installing compatible protobuf Go plugins..."
 go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.31.0
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
 
+# Add Go bin to PATH if not already there
+export PATH="$PATH:$(go env GOPATH)/bin"
+
 # Create output directory if it doesn't exist
 mkdir -p proto
 
