@@ -54,13 +54,13 @@ build: server client
 server:
 	@echo "Building server..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/$(SERVER_BINARY) $(CMD_DIR)/server
+	$(GOBUILD) -o $(BUILD_DIR)/$(SERVER_BINARY) ./$(CMD_DIR)/server
 
 # Build client
 client:
 	@echo "Building client..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/$(CLIENT_BINARY) $(CMD_DIR)/client
+	$(GOBUILD) -o $(BUILD_DIR)/$(CLIENT_BINARY) ./$(CMD_DIR)/client
 
 # Run tests
 test:
@@ -77,29 +77,40 @@ clean:
 # Run server (development)
 run-server:
 	@echo "Running DistKV server..."
-	$(GOBUILD) -o $(BUILD_DIR)/$(SERVER_BINARY) $(CMD_DIR)/server
+	$(GOBUILD) -o $(BUILD_DIR)/$(SERVER_BINARY) ./$(CMD_DIR)/server
 	$(BUILD_DIR)/$(SERVER_BINARY) -node-id=dev-node1 -address=localhost:8080 -data-dir=./dev-data
 
 # Run client (development)
 run-client:
 	@echo "Running DistKV client..."
-	$(GOBUILD) -o $(BUILD_DIR)/$(CLIENT_BINARY) $(CMD_DIR)/client
+	$(GOBUILD) -o $(BUILD_DIR)/$(CLIENT_BINARY) ./$(CMD_DIR)/client
 	$(BUILD_DIR)/$(CLIENT_BINARY) help
 
 # Development cluster (3 nodes)
 dev-cluster: build
 	@echo "Starting development cluster..."
 	@mkdir -p data1 data2 data3
+ifeq ($(OS),Windows_NT)
 	@echo "Starting node1 on port 8080..."
 	start "DistKV Node1" $(BUILD_DIR)/$(SERVER_BINARY) --node-id=node1 --address=localhost:8080 --data-dir=data1
 	@timeout /t 3 > nul
 	@echo "Starting node2 on port 8081..."
 	start "DistKV Node2" $(BUILD_DIR)/$(SERVER_BINARY) --node-id=node2 --address=localhost:8081 --data-dir=data2 --seed-nodes=localhost:8080
-	@timeout /t 3 > nul  
+	@timeout /t 3 > nul
 	@echo "Starting node3 on port 8082..."
 	start "DistKV Node3" $(BUILD_DIR)/$(SERVER_BINARY) --node-id=node3 --address=localhost:8082 --data-dir=data3 --seed-nodes=localhost:8080
+else
+	@echo "Starting node1 on port 8080..."
+	@$(BUILD_DIR)/$(SERVER_BINARY) --node-id=node1 --address=localhost:8080 --data-dir=data1 > data1/node.log 2>&1 &
+	@sleep 3
+	@echo "Starting node2 on port 8081..."
+	@$(BUILD_DIR)/$(SERVER_BINARY) --node-id=node2 --address=localhost:8081 --data-dir=data2 --seed-nodes=localhost:8080 > data2/node.log 2>&1 &
+	@sleep 3
+	@echo "Starting node3 on port 8082..."
+	@$(BUILD_DIR)/$(SERVER_BINARY) --node-id=node3 --address=localhost:8082 --data-dir=data3 --seed-nodes=localhost:8080 > data3/node.log 2>&1 &
+endif
 	@echo "Development cluster started on ports 8080, 8081, 8082"
-	@echo "Each node is running in a separate window"
+	@echo "Each node is running in the background"
 	@echo "To stop cluster: make stop-cluster"
 
 # Stop development cluster
