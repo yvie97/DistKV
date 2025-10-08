@@ -5,8 +5,9 @@ package gossip
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"distkv/pkg/errors"
+	"distkv/pkg/logging"
+	"distkv/pkg/metrics"
 	"math/rand"
 	"sync"
 	"time"
@@ -21,31 +22,37 @@ import (
 type Gossip struct {
 	// localNode is information about this node
 	localNode *NodeInfo
-	
+
 	// nodes maps node IDs to their information
 	nodes map[string]*NodeInfo
-	
+
 	// config holds gossip protocol configuration
 	config *GossipConfig
-	
+
 	// mutex protects concurrent access to the node map
 	mutex sync.RWMutex
-	
+
 	// stopChan signals shutdown
 	stopChan chan struct{}
-	
+
 	// wg tracks background goroutines
 	wg sync.WaitGroup
-	
+
 	// eventCallbacks are called when node status changes
 	eventCallbacks []NodeEventCallback
-	
+
 	// started indicates if the gossip protocol is running
 	started bool
-	
+
 	// connections caches gRPC connections to other nodes
 	connections map[string]*grpc.ClientConn
 	connectionsMutex sync.RWMutex
+
+	// logger is the component logger
+	logger *logging.Logger
+
+	// metrics collector
+	metrics *metrics.MetricsCollector
 }
 
 // NodeEvent represents a change in node status.
@@ -62,12 +69,20 @@ type NodeEventCallback func(event NodeEvent)
 
 // NewGossip creates a new gossip instance for a node.
 func NewGossip(nodeID, address string, config *GossipConfig) *Gossip {
+	logger := logging.WithComponent("gossip").
+		WithFields(map[string]interface{}{
+			"nodeID":  nodeID,
+			"address": address,
+		})
+
 	if config == nil {
 		config = DefaultGossipConfig()
+		logger.Info("Using default gossip configuration")
 	}
-	
+
 	localNode := NewNodeInfo(nodeID, address)
-	
+	logger.Info("Creating new gossip instance")
+
 	return &Gossip{
 		localNode:      localNode,
 		nodes:          make(map[string]*NodeInfo),
@@ -76,52 +91,81 @@ func NewGossip(nodeID, address string, config *GossipConfig) *Gossip {
 		eventCallbacks: make([]NodeEventCallback, 0),
 		started:        false,
 		connections:    make(map[string]*grpc.ClientConn),
+		logger:         logger,
+		metrics:        metrics.GetGlobalMetrics(),
 	}
 }
 
 // Start begins the gossip protocol background processes.
 func (g *Gossip) Start() error {
+	g.logger.Info("Starting gossip protocol")
+
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	
+
 	if g.started {
-		return fmt.Errorf("gossip already started")
+		g.logger.Warn("Gossip protocol already started")
+		return errors.New(errors.ErrCodeInternal, "gossip already started")
 	}
-	
+
 	// Add local node to the cluster view
 	g.nodes[g.localNode.NodeID] = g.localNode.Copy()
-	
+	g.metrics.Gossip().TotalNodes.Store(int64(len(g.nodes)))
+	g.metrics.Gossip().AliveNodes.Store(1)
+
 	// Start background workers
 	g.startBackgroundWorkers()
-	
+
 	g.started = true
+	g.logger.Info("Gossip protocol started successfully")
 	return nil
 }
 
 // Stop shuts down the gossip protocol gracefully.
 func (g *Gossip) Stop() error {
+	g.logger.Info("Stopping gossip protocol")
+
 	g.mutex.Lock()
 	if !g.started {
 		g.mutex.Unlock()
+		g.logger.Warn("Gossip protocol not started")
 		return nil
 	}
 	g.started = false
 	g.mutex.Unlock()
-	
+
 	// Signal shutdown
+	g.logger.Debug("Signaling background workers to stop")
 	close(g.stopChan)
-	
-	// Wait for background workers to finish
-	g.wg.Wait()
-	
+
+	// Wait for background workers with timeout
+	done := make(chan struct{})
+	go func() {
+		g.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		g.logger.Debug("Background workers stopped successfully")
+	case <-time.After(10 * time.Second):
+		g.logger.Warn("Timeout waiting for background workers to stop")
+	}
+
 	// Close all gRPC connections
 	g.connectionsMutex.Lock()
-	for _, conn := range g.connections {
-		conn.Close()
+	connectionCount := len(g.connections)
+	g.logger.WithField("connectionCount", connectionCount).Debug("Closing gRPC connections")
+	for address, conn := range g.connections {
+		if err := conn.Close(); err != nil {
+			g.logger.WithError(err).WithField("address", address).
+				Warn("Error closing gRPC connection")
+		}
 	}
 	g.connections = make(map[string]*grpc.ClientConn)
 	g.connectionsMutex.Unlock()
-	
+
+	g.logger.Info("Gossip protocol stopped successfully")
 	return nil
 }
 
@@ -447,28 +491,37 @@ func (g *Gossip) createGossipMessage() *GossipMessageData {
 func (g *Gossip) sendGossipToNode(targetNode *NodeInfo, message *GossipMessageData) {
 	conn, err := g.getConnection(targetNode.Address)
 	if err != nil {
-		log.Printf("Failed to get connection to node %s (%s): %v", 
-			targetNode.NodeID, targetNode.Address, err)
+		g.logger.WithError(err).WithFields(map[string]interface{}{
+			"targetNode": targetNode.NodeID,
+			"address":    targetNode.Address,
+		}).Debug("Failed to get connection to node")
+		g.metrics.Gossip().MessageErrors.Add(1)
 		g.markNodeSuspect(targetNode.NodeID)
 		return
 	}
-	
+
 	client := pb.NewNodeServiceClient(conn)
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	// Convert our internal message to protobuf format
 	protoMessage := g.convertToProtoMessage(message)
-	
+
 	response, err := client.Gossip(ctx, protoMessage)
 	if err != nil {
-		log.Printf("Failed to gossip with node %s (%s): %v", 
-			targetNode.NodeID, targetNode.Address, err)
+		g.logger.WithError(err).WithFields(map[string]interface{}{
+			"targetNode": targetNode.NodeID,
+			"address":    targetNode.Address,
+		}).Debug("Failed to send gossip message")
+		g.metrics.Gossip().MessageErrors.Add(1)
 		g.markNodeSuspect(targetNode.NodeID)
 		return
 	}
-	
+
+	g.metrics.Gossip().MessagesSent.Add(1)
+	g.metrics.Gossip().MessagesReceived.Add(1)
+
 	// Process the response and update our node information
 	g.processGossipResponse(targetNode.NodeID, response)
 }

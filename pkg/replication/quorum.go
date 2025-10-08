@@ -5,9 +5,11 @@ package replication
 import (
 	"context"
 	"distkv/pkg/consensus"
+	"distkv/pkg/errors"
+	"distkv/pkg/logging"
+	"distkv/pkg/metrics"
 	"distkv/pkg/storage"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 )
@@ -120,11 +122,13 @@ type ReplicaResponse struct {
 
 // QuorumManager handles quorum-based operations across replicas.
 type QuorumManager struct {
-	config       *QuorumConfig
-	nodeSelector NodeSelector // Selects which nodes to use for a key
-	client       ReplicaClient // Communicates with replica nodes
+	config        *QuorumConfig
+	nodeSelector  NodeSelector  // Selects which nodes to use for a key
+	client        ReplicaClient // Communicates with replica nodes
 	storageEngine StorageEngine // Real LSM-tree storage engine
-	mutex        sync.RWMutex
+	mutex         sync.RWMutex
+	logger        *logging.Logger
+	metrics       *metrics.MetricsCollector
 }
 
 // NodeSelector interface for selecting replica nodes for a given key.
@@ -157,33 +161,58 @@ type StorageEngine interface {
 
 // NewQuorumManager creates a new quorum manager.
 func NewQuorumManager(config *QuorumConfig, nodeSelector NodeSelector, client ReplicaClient, storageEngine StorageEngine) (*QuorumManager, error) {
+	logger := logging.WithComponent("replication.quorum")
+
 	if config == nil {
 		config = DefaultQuorumConfig()
+		logger.Info("Using default quorum configuration")
 	}
-	
+
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid quorum config: %v", err)
+		logger.WithError(err).Error("Invalid quorum configuration")
+		return nil, errors.Wrap(err, errors.ErrCodeInvalidConfig, "invalid quorum config")
 	}
-	
+
+	logger.WithFields(map[string]interface{}{
+		"N": config.N,
+		"R": config.R,
+		"W": config.W,
+	}).Info("Creating new quorum manager")
+
 	return &QuorumManager{
-		config:       config,
-		nodeSelector: nodeSelector,
-		client:       client,
+		config:        config,
+		nodeSelector:  nodeSelector,
+		client:        client,
 		storageEngine: storageEngine,
+		logger:        logger,
+		metrics:       metrics.GetGlobalMetrics(),
 	}, nil
 }
 
 // Write performs a quorum write operation.
 // It writes to W replicas and returns success when enough replicas acknowledge.
 func (qm *QuorumManager) Write(req *WriteRequest) (*WriteResponse, error) {
+	tracker := metrics.NewLatencyTracker()
+	defer func() {
+		qm.metrics.Replication().QuorumWriteOps.Add(1)
+		qm.metrics.Replication().QuorumWriteLatencyNs.Store(tracker.Finish())
+	}()
+
+	// Validate input
+	if req.Key == "" {
+		return nil, errors.New(errors.ErrCodeInvalidKey, "key cannot be empty")
+	}
+
+	qm.logger.WithField("key", req.Key).Debug("Starting quorum write")
+
 	// Get replica nodes for this key
 	replicas := qm.nodeSelector.GetAliveReplicas(req.Key, qm.config.N)
-	
-	// Debug logging
-	log.Printf("Write operation for key '%s': found %d alive replicas, need %d", req.Key, len(replicas), qm.config.W)
-	for i, replica := range replicas {
-		log.Printf("  Replica %d: %s at %s (alive: %v)", i+1, replica.NodeID, replica.Address, replica.IsAlive)
-	}
+
+	qm.logger.WithFields(map[string]interface{}{
+		"key":           req.Key,
+		"replicaCount":  len(replicas),
+		"requiredCount": qm.config.W,
+	}).Debug("Found replicas for write operation")
 	
 	// Debug: Always try local-only for W=1 in testing
 	if qm.config.W == 1 {
@@ -241,7 +270,7 @@ func (qm *QuorumManager) Write(req *WriteRequest) (*WriteResponse, error) {
 	
 	// Collect responses until we have enough successful writes
 	var successfulWrites int
-	var errors []error
+	var errs []error
 	var latestVectorClock *consensus.VectorClock
 	
 	for i := 0; i < len(replicas) && successfulWrites < qm.config.W; i++ {
@@ -255,40 +284,70 @@ func (qm *QuorumManager) Write(req *WriteRequest) (*WriteResponse, error) {
 					latestVectorClock = response.VectorClock
 				}
 			} else {
-				errors = append(errors, fmt.Errorf("node %s: %v", response.NodeID, response.Error))
+				errs = append(errs, fmt.Errorf("node %s: %v", response.NodeID, response.Error))
 			}
 		case <-ctx.Done():
 			return &WriteResponse{
 				Success:         false,
 				ReplicasWritten: successfulWrites,
-				Errors:          append(errors, ctx.Err()),
+				Errors:          append(errs, ctx.Err()),
 			}, ctx.Err()
 		}
 	}
 	
 	// Return success if we got enough acknowledgments
 	if successfulWrites >= qm.config.W {
+		qm.metrics.Replication().QuorumWriteSuccess.Add(1)
+		qm.logger.WithFields(map[string]interface{}{
+			"key":              req.Key,
+			"successfulWrites": successfulWrites,
+			"required":         qm.config.W,
+		}).Debug("Quorum write succeeded")
 		return &WriteResponse{
 			Success:         true,
 			VectorClock:     latestVectorClock,
 			ReplicasWritten: successfulWrites,
-			Errors:          errors,
+			Errors:          errs,
 		}, nil
 	}
-	
+
+	qm.metrics.Replication().QuorumWriteFailed.Add(1)
+	qm.logger.WithFields(map[string]interface{}{
+		"key":              req.Key,
+		"successfulWrites": successfulWrites,
+		"required":         qm.config.W,
+	}).Warn("Quorum write failed")
 	return &WriteResponse{
 		Success:         false,
 		ReplicasWritten: successfulWrites,
-		Errors:          errors,
-	}, fmt.Errorf("write quorum failed: got %d acknowledgments, needed %d", 
-		successfulWrites, qm.config.W)
+		Errors:          errs,
+	}, errors.NewQuorumFailedError(qm.config.W, successfulWrites)
 }
 
 // Read performs a quorum read operation.
 // It reads from R replicas and resolves conflicts using vector clocks.
 func (qm *QuorumManager) Read(req *ReadRequest) (*ReadResponse, error) {
+	tracker := metrics.NewLatencyTracker()
+	defer func() {
+		qm.metrics.Replication().QuorumReadOps.Add(1)
+		qm.metrics.Replication().QuorumReadLatencyNs.Store(tracker.Finish())
+	}()
+
+	// Validate input
+	if req.Key == "" {
+		return nil, errors.New(errors.ErrCodeInvalidKey, "key cannot be empty")
+	}
+
+	qm.logger.WithField("key", req.Key).Debug("Starting quorum read")
+
 	// Get replica nodes for this key
 	replicas := qm.nodeSelector.GetAliveReplicas(req.Key, qm.config.N)
+
+	qm.logger.WithFields(map[string]interface{}{
+		"key":           req.Key,
+		"replicaCount":  len(replicas),
+		"requiredCount": qm.config.R,
+	}).Debug("Found replicas for read operation")
 	
 	// Debug: Always try local-only for R=1 in testing
 	if qm.config.R == 1 {
@@ -335,7 +394,7 @@ func (qm *QuorumManager) Read(req *ReadRequest) (*ReadResponse, error) {
 	
 	// Collect responses
 	var responses []*ReplicaResponse
-	var errors []error
+	var errs []error
 	
 	for i := 0; i < qm.config.R; i++ {
 		select {
@@ -343,29 +402,41 @@ func (qm *QuorumManager) Read(req *ReadRequest) (*ReadResponse, error) {
 			if response.Success {
 				responses = append(responses, response)
 			} else {
-				errors = append(errors, fmt.Errorf("node %s: %v", response.NodeID, response.Error))
+				errs = append(errs, fmt.Errorf("node %s: %v", response.NodeID, response.Error))
 			}
 		case <-ctx.Done():
 			return &ReadResponse{
 				Found:        false,
 				ReplicasRead: len(responses),
-				Errors:       append(errors, ctx.Err()),
+				Errors:       append(errs, ctx.Err()),
 			}, ctx.Err()
 		}
 	}
 	
 	// Check if we got enough responses
 	if len(responses) < qm.config.R {
+		qm.metrics.Replication().QuorumReadFailed.Add(1)
+		qm.logger.WithFields(map[string]interface{}{
+			"key":       req.Key,
+			"responses": len(responses),
+			"required":  qm.config.R,
+		}).Warn("Quorum read failed")
 		return &ReadResponse{
 			Found:        false,
 			ReplicasRead: len(responses),
-			Errors:       errors,
-		}, fmt.Errorf("read quorum failed: got %d responses, needed %d", 
-			len(responses), qm.config.R)
+			Errors:       errs,
+		}, errors.NewQuorumFailedError(qm.config.R, len(responses))
 	}
-	
+
+	qm.metrics.Replication().QuorumReadSuccess.Add(1)
+	qm.logger.WithFields(map[string]interface{}{
+		"key":       req.Key,
+		"responses": len(responses),
+		"required":  qm.config.R,
+	}).Debug("Quorum read succeeded")
+
 	// Resolve conflicts and find the most recent version
-	return qm.resolveReadConflicts(responses, errors), nil
+	return qm.resolveReadConflicts(responses, errs), nil
 }
 
 // resolveReadConflicts finds the most recent version among conflicting replicas.

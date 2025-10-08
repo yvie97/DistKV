@@ -256,21 +256,37 @@ time ./build/distkv-client get key500
 ./build/distkv-client -consistency=all put key value
 ```
 
-## 📊 Monitoring
+## 📊 Monitoring & Observability
+
+### Production-Ready Features
+
+**Structured Logging:**
+- Component-based loggers with contextual fields
+- Multiple log levels (DEBUG, INFO, WARN, ERROR, FATAL)
+- Automatic caller information tracking
+
+**Comprehensive Metrics:**
+- **Storage**: Read/write ops, latencies, cache hit rates, compaction stats
+- **Replication**: Quorum success rates, conflict resolution tracking
+- **Gossip**: Node health, message counts, state transitions
+- **Network**: Connections, bytes transferred, timeout tracking
+
+**Error Handling:**
+- Structured errors with error codes and context
+- Stack trace capture for debugging
+- Retryable error classification
+
+**Graceful Shutdown:**
+- Proper resource cleanup and data flushing
+- Ordered component shutdown with timeouts
+- Comprehensive shutdown metrics reporting
 
 ### Cluster Status
 ```bash
 ./build/distkv-client status
 ```
 
-### Metrics Available
-- Total requests processed
-- Average read/write latency
-- Node availability percentage
-- Storage utilization per node
-- Cache hit rates
-
-### Example Output
+### Example Metrics Output
 ```
 === Cluster Status ===
 Health: 3 total nodes, 3 alive, 0 dead (100.0% availability)
@@ -280,9 +296,12 @@ Health: 3 total nodes, 3 alive, 0 dead (100.0% availability)
   node2 (localhost:8081) - ALIVE - Last seen: 2025-09-05T22:45:28-07:00
   node3 (localhost:8082) - ALIVE - Last seen: 2025-09-05T22:45:27-07:00
 
-=== Metrics ===
-Total requests: 1543
-Average latency: 2.3 ms
+=== Storage Metrics ===
+Total reads: 5234 (errors: 12)
+Total writes: 3421 (errors: 3)
+Cache hit rate: 87.3%
+SSTable count: 8
+Compaction count: 15
 ```
 
 ## 🐳 Docker Support
@@ -368,6 +387,12 @@ DistKV/
 ├── pkg/                        # Core distributed systems packages
 │   ├── consensus/             # Vector clocks for conflict resolution
 │   │   └── vector_clock.go    # Causality tracking implementation
+│   ├── errors/               # Comprehensive error handling
+│   │   └── errors.go         # Structured errors with codes and context
+│   ├── logging/              # Centralized structured logging
+│   │   └── logger.go         # Component-based logging with levels
+│   ├── metrics/              # Production-ready metrics collection
+│   │   └── metrics.go        # Storage, replication, gossip, network metrics
 │   ├── gossip/               # Network-based failure detection
 │   │   ├── gossip.go         # Gossip protocol implementation
 │   │   └── node_info.go      # Node health and metadata

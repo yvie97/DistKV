@@ -10,7 +10,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -24,6 +23,8 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"distkv/pkg/gossip"
+	"distkv/pkg/logging"
+	"distkv/pkg/metrics"
 	"distkv/pkg/partition"
 	"distkv/pkg/replication"
 	"distkv/pkg/storage"
@@ -76,34 +77,62 @@ type DistKVServer struct {
 
 // main is the entry point for the DistKV server
 func main() {
+	// Initialize logging system
+	logging.InitGlobalLogger(&logging.LogConfig{
+		Level:      logging.INFO,
+		Component:  "distkv.server",
+		Output:     os.Stdout,
+		TimeFormat: "2006-01-02 15:04:05.000",
+	})
+	logger := logging.GetGlobalLogger()
+
+	// Initialize metrics
+	_ = metrics.GetGlobalMetrics()
+
+	logger.Info("DistKV server starting")
+
 	// Parse command line flags
 	config := parseFlags()
-	
+
 	// Validate configuration
 	if err := validateConfig(config); err != nil {
-		log.Fatalf("Invalid configuration: %v", err)
+		logger.WithError(err).Fatal("Invalid configuration")
 	}
-	
+
 	// Create and start the server
 	server, err := NewDistKVServer(config)
 	if err != nil {
-		log.Fatalf("Failed to create server: %v", err)
+		logger.WithError(err).Fatal("Failed to create server")
 	}
-	
+
 	// Start the server
 	if err := server.Start(); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		logger.WithError(err).Fatal("Failed to start server")
 	}
-	
+
 	// Wait for shutdown signal
 	waitForShutdown()
-	
-	// Graceful shutdown
-	if err := server.Stop(); err != nil {
-		log.Printf("Error during shutdown: %v", err)
+
+	// Graceful shutdown with timeout
+	logger.Info("Initiating graceful shutdown")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer shutdownCancel()
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- server.Stop()
+	}()
+
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			logger.WithError(err).Error("Error during shutdown")
+		} else {
+			logger.Info("DistKV server shut down successfully")
+		}
+	case <-shutdownCtx.Done():
+		logger.Error("Shutdown timeout exceeded, forcing exit")
 	}
-	
-	log.Println("DistKV server shut down successfully")
 }
 
 // parseFlags parses command line arguments and returns server configuration
@@ -264,73 +293,132 @@ func NewDistKVServer(config *ServerConfig) (*DistKVServer, error) {
 
 // Start starts the DistKV server
 func (s *DistKVServer) Start() error {
-	log.Printf("Starting DistKV server: %s at %s", s.config.NodeID, s.config.Address)
-	
+	logger := logging.WithComponent("server.start").
+		WithFields(map[string]interface{}{
+			"nodeID":  s.config.NodeID,
+			"address": s.config.Address,
+		})
+	logger.Info("Starting DistKV server")
+
 	// Start gossip protocol
 	if err := s.gossipManager.Start(); err != nil {
+		logger.WithError(err).Error("Failed to start gossip manager")
 		return fmt.Errorf("failed to start gossip manager: %v", err)
 	}
-	
+
 	// Add self to consistent hash ring
 	s.consistentHash.AddNode(s.config.NodeID)
-	
+
 	// Add self to gossip manager (always mark self as alive)
 	s.gossipManager.AddNode(s.config.NodeID, s.config.Address)
-	
+
 	// Join cluster by connecting to seed nodes
 	if err := s.joinCluster(); err != nil {
-		log.Printf("Warning: failed to join cluster: %v", err)
+		logger.WithError(err).Warn("Failed to join cluster, operating as single-node")
 		// Continue anyway - we can operate as a single-node cluster
 	}
-	
+
 	// Start gRPC server
 	if err := s.startGRPCServer(); err != nil {
+		logger.WithError(err).Error("Failed to start gRPC server")
 		return fmt.Errorf("failed to start gRPC server: %v", err)
 	}
-	
-	log.Printf("DistKV server started successfully")
+
+	logger.Info("DistKV server started successfully")
 	return nil
 }
 
 // Stop stops the DistKV server gracefully
 func (s *DistKVServer) Stop() error {
-	log.Printf("Shutting down DistKV server: %s", s.config.NodeID)
-	
-	// Stop gRPC server
+	logger := logging.WithComponent("server.shutdown").
+		WithField("nodeID", s.config.NodeID)
+	logger.Info("Initiating graceful shutdown")
+
+	var shutdownErrors []error
+
+	// Stop accepting new requests - stop gRPC server
 	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
+		logger.Info("Stopping gRPC server")
+		done := make(chan struct{})
+		go func() {
+			s.grpcServer.GracefulStop()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			logger.Info("gRPC server stopped successfully")
+		case <-time.After(30 * time.Second):
+			logger.Warn("gRPC graceful stop timeout, forcing shutdown")
+			s.grpcServer.Stop()
+		}
 	}
-	
+
 	// Stop gossip manager
 	if s.gossipManager != nil {
-		s.gossipManager.Stop()
+		logger.Info("Stopping gossip manager")
+		if err := s.gossipManager.Stop(); err != nil {
+			logger.WithError(err).Error("Error stopping gossip manager")
+			shutdownErrors = append(shutdownErrors, err)
+		}
 	}
-	
-	// Close storage engine
+
+	// Close replica client connections
+	if s.replicaClient != nil {
+		logger.Info("Closing replica client connections")
+		// Add Close method call if needed
+	}
+
+	// Close storage engine (flush remaining data)
 	if s.storageEngine != nil {
-		s.storageEngine.Close()
+		logger.Info("Closing storage engine")
+		if err := s.storageEngine.Close(); err != nil {
+			logger.WithError(err).Error("Error closing storage engine")
+			shutdownErrors = append(shutdownErrors, err)
+		}
 	}
-	
+
+	// Print final metrics snapshot
+	metricsSnapshot := metrics.GetGlobalMetrics().Snapshot()
+	logger.WithFields(map[string]interface{}{
+		"uptimeSeconds":   metricsSnapshot.System.UptimeSeconds,
+		"totalReads":      metricsSnapshot.Storage.ReadOps,
+		"totalWrites":     metricsSnapshot.Storage.WriteOps,
+		"sstableCount":    metricsSnapshot.Storage.SSTableCount,
+		"compactionCount": metricsSnapshot.Storage.CompactionCount,
+	}).Info("Final metrics snapshot")
+
+	if len(shutdownErrors) > 0 {
+		logger.WithField("errorCount", len(shutdownErrors)).
+			Warn("Server shutdown completed with errors")
+		return fmt.Errorf("shutdown completed with %d errors", len(shutdownErrors))
+	}
+
+	logger.Info("Server shutdown completed successfully")
 	return nil
 }
 
 // joinCluster attempts to join the cluster by contacting seed nodes
 func (s *DistKVServer) joinCluster() error {
+	logger := logging.WithComponent("server.cluster")
+
 	if len(s.config.SeedNodes) == 0 {
-		log.Printf("No seed nodes specified, starting as single-node cluster")
+		logger.Info("No seed nodes specified, starting as single-node cluster")
 		// Still add self to hash ring for single-node operation
 		s.replicaClient.UpdateNodeAddress(s.config.NodeID, s.config.Address)
 		return nil
 	}
 	
-	log.Printf("Attempting to join cluster via seed nodes: %v", s.config.SeedNodes)
-	
+	logger.WithField("seedNodes", s.config.SeedNodes).
+		Info("Attempting to join cluster via seed nodes")
+
 	// Try to contact each seed node to get cluster membership
 	var discoveredNodes []string
 	for _, seedAddress := range s.config.SeedNodes {
 		nodes, err := s.contactSeedNode(seedAddress)
 		if err != nil {
-			log.Printf("Failed to contact seed node %s: %v", seedAddress, err)
+			logger.WithError(err).WithField("seedAddress", seedAddress).
+				Warn("Failed to contact seed node")
 			continue
 		}
 		discoveredNodes = append(discoveredNodes, nodes...)
@@ -353,8 +441,11 @@ func (s *DistKVServer) joinCluster() error {
 		
 		// Update replica client with node address
 		s.replicaClient.UpdateNodeAddress(nodeID, address)
-		
-		log.Printf("Discovered and added node: %s at %s", nodeID, address)
+
+		logger.WithFields(map[string]interface{}{
+			"nodeID":  nodeID,
+			"address": address,
+		}).Debug("Discovered and added node")
 	}
 	
 	// Also add self to replica client for local operations
@@ -363,11 +454,13 @@ func (s *DistKVServer) joinCluster() error {
 	// Announce ourselves to the cluster
 	for _, seedAddress := range s.config.SeedNodes {
 		if err := s.announceSelfToNode(seedAddress); err != nil {
-			log.Printf("Failed to announce to seed node %s: %v", seedAddress, err)
+			logger.WithError(err).WithField("seedAddress", seedAddress).
+				Warn("Failed to announce to seed node")
 		}
 	}
-	
-	log.Printf("Successfully joined cluster with %d total nodes", len(discoveredNodes)+1)
+
+	logger.WithField("nodeCount", len(discoveredNodes)+1).
+		Info("Successfully joined cluster")
 	return nil
 }
 
@@ -428,8 +521,10 @@ func (s *DistKVServer) announceSelfToNode(targetAddress string) error {
 	if err != nil {
 		return fmt.Errorf("failed to announce: %v", err)
 	}
-	
-	log.Printf("Successfully announced self to %s", targetAddress)
+
+	logging.WithComponent("server.cluster").
+		WithField("targetAddress", targetAddress).
+		Debug("Successfully announced self to node")
 	return nil
 }
 
@@ -459,9 +554,10 @@ func (s *DistKVServer) startGRPCServer() error {
 	
 	// Start server in background
 	go func() {
-		log.Printf("gRPC server listening on %s", s.config.Address)
+		logger := logging.WithComponent("server.grpc")
+		logger.WithField("address", s.config.Address).Info("gRPC server listening")
 		if err := s.grpcServer.Serve(listener); err != nil {
-			log.Printf("gRPC server error: %v", err)
+			logger.WithError(err).Error("gRPC server error")
 		}
 	}()
 	
@@ -470,9 +566,11 @@ func (s *DistKVServer) startGRPCServer() error {
 
 // waitForShutdown waits for OS signals to shutdown gracefully
 func waitForShutdown() {
+	logger := logging.WithComponent("server.signals")
+
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
 	sig := <-sigChan
-	log.Printf("Received signal %v, shutting down...", sig)
+	logger.WithField("signal", sig.String()).Info("Received shutdown signal")
 }
