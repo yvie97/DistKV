@@ -25,4 +25,7 @@ var (
 	
 	// ErrInvalidConfiguration is returned for invalid storage configuration
 	ErrInvalidConfiguration = errors.New("invalid storage configuration")
+
+	// ErrMemoryLimitExceeded is returned when memory usage exceeds configured limits
+	ErrMemoryLimitExceeded = errors.New("memory limit exceeded")
 )

@@ -20,23 +20,26 @@ import (
 type SSTable struct {
 	// filePath is the path to the SSTable file on disk
 	filePath string
-	
+
 	// index maps keys to their byte offsets in the file for fast lookups
 	// This is loaded into memory when the SSTable is opened
 	index map[string]int64
-	
+
 	// bloomFilter helps avoid disk reads for keys that don't exist
 	bloomFilter *BloomFilter
-	
+
 	// minKey and maxKey define the key range in this SSTable
 	minKey, maxKey string
-	
+
 	// size is the file size in bytes
 	size int64
-	
+
+	// level indicates which compaction level this SSTable belongs to (0 = newest)
+	level int
+
 	// mutex protects concurrent access to the SSTable
 	mutex sync.RWMutex
-	
+
 	// file handle for reading data (kept open for performance)
 	file *os.File
 }
@@ -50,6 +53,7 @@ type SSTableMetadata struct {
 	MaxKey      string           `json:"max_key"`
 	EntryCount  int              `json:"entry_count"`
 	FileSize    int64            `json:"file_size"`
+	Level       int              `json:"level"`
 	Checksum    uint32           `json:"checksum"`
 }
 
@@ -74,7 +78,15 @@ func CreateSSTable(memTable *MemTable, filePath string, config *StorageConfig) (
 	
 	// Initialize metadata
 	index := make(map[string]int64)
-	bloomFilter := NewBloomFilter(memTable.Count(), config.BloomFilterBits)
+
+	// Create bloom filter - use FPR if configured, otherwise use bits per key
+	var bloomFilter *BloomFilter
+	if config.BloomFilterFPR > 0 && config.BloomFilterFPR < 1 {
+		bloomFilter = NewBloomFilterWithFPR(memTable.Count(), config.BloomFilterFPR)
+	} else {
+		bloomFilter = NewBloomFilter(memTable.Count(), config.BloomFilterBits)
+	}
+
 	var minKey, maxKey string
 	var entryCount int
 	var filePosition int64 = 0 // Track file position manually

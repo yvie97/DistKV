@@ -29,8 +29,8 @@ type Engine struct {
 	// flushingMemTables are being written to disk (read-only)
 	flushingMemTables []*MemTable
 
-	// sstables contains all disk-based storage files
-	sstables []*SSTable
+	// sstables contains all disk-based storage files organized by level
+	sstables [][]*SSTable
 
 	// mutex protects concurrent access to engine state
 	mutex sync.RWMutex
@@ -58,6 +58,9 @@ type Engine struct {
 
 	// metrics collector
 	metrics *metrics.MetricsCollector
+
+	// memoryMonitor tracks and enforces memory limits
+	memoryMonitor *MemoryMonitor
 }
 
 // NewEngine creates a new storage engine with the specified configuration.
@@ -82,12 +85,34 @@ func NewEngine(dataDir string, config *StorageConfig) (*Engine, error) {
 
 	logger.WithField("dataDir", dataDir).Info("Initializing storage engine")
 
+	// Initialize sstables array for all levels
+	maxLevels := config.MaxLevels
+	if maxLevels <= 0 {
+		maxLevels = 7
+	}
+	sstables := make([][]*SSTable, maxLevels)
+	for i := range sstables {
+		sstables[i] = make([]*SSTable, 0)
+	}
+
+	// Create memory monitor
+	memoryConfig := DefaultMemoryConfig()
+	memoryMonitor := NewMemoryMonitor(memoryConfig)
+
+	// Register memory pressure callback
+	memoryMonitor.RegisterPressureCallback(func(level MemoryPressureLevel) {
+		if level >= MemoryPressureHigh {
+			logger.WithField("level", level).Warn("High memory pressure detected, triggering flush")
+			// Trigger flush on high memory pressure (will be handled by the engine instance)
+		}
+	})
+
 	engine := &Engine{
 		config:            config,
 		dataDir:           dataDir,
 		activeMemTable:    NewMemTable(),
 		flushingMemTables: make([]*MemTable, 0),
-		sstables:          make([]*SSTable, 0),
+		sstables:          sstables,
 		flushChan:         make(chan struct{}, 1),
 		compactionChan:    make(chan struct{}, 1),
 		stopChan:          make(chan struct{}),
@@ -95,6 +120,7 @@ func NewEngine(dataDir string, config *StorageConfig) (*Engine, error) {
 		closed:            false,
 		logger:            logger,
 		metrics:           metrics.GetGlobalMetrics(),
+		memoryMonitor:     memoryMonitor,
 	}
 
 	// Load existing SSTables from disk
@@ -142,8 +168,21 @@ func (e *Engine) Put(key string, value []byte, vectorClock *consensus.VectorCloc
 	// Create entry
 	entry := NewEntry(key, value, vectorClock)
 
+	// Estimate memory usage and check limits
+	estimatedSize := int64(len(key) + len(value) + 64) // Rough estimate
+	if err := e.memoryMonitor.RecordMemTableAllocation(estimatedSize); err != nil {
+		e.stats.WriteErrors++
+		e.metrics.Storage().WriteErrors.Add(1)
+		e.mutex.Unlock()
+		e.logger.WithError(err).WithField("estimatedSize", estimatedSize).
+			Error("Memory limit exceeded, cannot write entry")
+		return err
+	}
+
 	// Add to active MemTable
 	if err := e.activeMemTable.Put(*entry); err != nil {
+		// Rollback memory allocation on error
+		e.memoryMonitor.RecordMemTableDeallocation(estimatedSize)
 		e.stats.WriteErrors++
 		e.metrics.Storage().WriteErrors.Add(1)
 		e.mutex.Unlock()
@@ -230,23 +269,25 @@ func (e *Engine) Get(key string) (*Entry, error) {
 		}
 	}
 
-	// Check SSTables (newest first - more likely to have recent data)
+	// Check SSTables level by level (lower levels first - more recent data)
 	e.metrics.Storage().CacheMisses.Add(1)
-	for i := len(e.sstables) - 1; i >= 0; i-- {
-		entry, err := e.sstables[i].Get(key)
-		if err == nil {
-			if entry.Deleted {
-				return nil, ErrKeyNotFound // Tombstone found
+	for level := 0; level < len(e.sstables); level++ {
+		for i := len(e.sstables[level]) - 1; i >= 0; i-- {
+			entry, err := e.sstables[level][i].Get(key)
+			if err == nil {
+				if entry.Deleted {
+					return nil, ErrKeyNotFound // Tombstone found
+				}
+				return entry, nil
 			}
-			return entry, nil
-		}
-		if err != ErrKeyNotFound {
-			e.stats.ReadErrors++
-			e.metrics.Storage().ReadErrors.Add(1)
-			e.logger.WithError(err).WithField("key", key).
-				Error("Error reading from SSTable")
-			return nil, errors.Wrap(err, errors.ErrCodeInternal,
-				"failed to read from SSTable")
+			if err != ErrKeyNotFound {
+				e.stats.ReadErrors++
+				e.metrics.Storage().ReadErrors.Add(1)
+				e.logger.WithError(err).WithField("key", key).
+					Error("Error reading from SSTable")
+				return nil, errors.Wrap(err, errors.ErrCodeInternal,
+					"failed to read from SSTable")
+			}
 		}
 	}
 
@@ -296,13 +337,22 @@ func (e *Engine) Stats() *StorageStats {
 	// Update current stats
 	e.stats.MemTableSize = e.activeMemTable.Size()
 	e.stats.MemTableCount = 1 + len(e.flushingMemTables)
-	e.stats.SSTableCount = len(e.sstables)
-	
-	// Calculate total data size
+
+	// Update memory stats
+	memUsage := e.memoryMonitor.GetMemoryUsage()
+	e.stats.MemoryUsage = memUsage.TotalUsage
+	e.stats.HeapUsage = memUsage.HeapAlloc
+
+	// Count total SSTables across all levels
+	totalSSTables := 0
 	var totalSize int64 = e.activeMemTable.Size()
-	for _, sst := range e.sstables {
-		totalSize += sst.Size()
+	for level := 0; level < len(e.sstables); level++ {
+		totalSSTables += len(e.sstables[level])
+		for _, sst := range e.sstables[level] {
+			totalSize += sst.Size()
+		}
 	}
+	e.stats.SSTableCount = totalSSTables
 	e.stats.TotalDataSize = totalSize
 	
 	// Copy stats to avoid race conditions
@@ -345,6 +395,10 @@ func (e *Engine) Close() error {
 			errors.New(errors.ErrCodeTimeout, "timeout waiting for background workers"))
 	}
 
+	// Stop memory monitor
+	e.logger.Debug("Stopping memory monitor")
+	e.memoryMonitor.Stop()
+
 	// Flush any remaining data in active MemTable
 	e.mutex.Lock()
 	if e.activeMemTable.Size() > 0 {
@@ -372,16 +426,24 @@ func (e *Engine) Close() error {
 	}
 
 	// Close all SSTable files
-	e.logger.WithField("sstableCount", len(e.sstables)).Debug("Closing SSTable files")
 	e.mutex.Lock()
 	sstables := e.sstables
+	totalSSTables := 0
+	for level := range sstables {
+		totalSSTables += len(sstables[level])
+	}
 	e.mutex.Unlock()
 
-	for i, sst := range sstables {
-		if err := sst.Close(); err != nil {
-			e.logger.WithError(err).WithField("sstableIndex", i).
-				Error("Failed to close SSTable")
-			shutdownErrors = append(shutdownErrors, err)
+	e.logger.WithField("sstableCount", totalSSTables).Debug("Closing SSTable files")
+	for level := range sstables {
+		for i, sst := range sstables[level] {
+			if err := sst.Close(); err != nil {
+				e.logger.WithError(err).WithFields(map[string]interface{}{
+					"level":        level,
+					"sstableIndex": i,
+				}).Error("Failed to close SSTable")
+				shutdownErrors = append(shutdownErrors, err)
+			}
 		}
 	}
 
@@ -486,10 +548,16 @@ func (e *Engine) performFlush() {
 		return
 	}
 
-	// Add SSTable to engine and remove from flushing list
+	// Add SSTable to level 0 (newest level)
 	e.mutex.Lock()
-	e.sstables = append(e.sstables, sstable)
-	e.metrics.Storage().SSTableCount.Store(int64(len(e.sstables)))
+	sstable.level = 0
+	e.sstables[0] = append(e.sstables[0], sstable)
+
+	totalSSTables := 0
+	for level := range e.sstables {
+		totalSSTables += len(e.sstables[level])
+	}
+	e.metrics.Storage().SSTableCount.Store(int64(totalSSTables))
 
 	// Remove from flushing list
 	for i, mt := range e.flushingMemTables {
@@ -504,14 +572,15 @@ func (e *Engine) performFlush() {
 	e.metrics.Storage().FlushCount.Add(1)
 	e.metrics.Storage().FlushDurationNs.Store(tracker.Finish())
 	e.logger.WithFields(map[string]interface{}{
-		"path":         filePath,
-		"sstableCount": len(e.sstables),
+		"path":            filePath,
+		"level0SSTableCount": len(e.sstables[0]),
+		"totalSSTableCount":  totalSSTables,
 	}).Info("SSTable created successfully")
 
-	// Check if compaction is needed
-	if len(e.sstables) >= e.config.CompactionThreshold {
-		e.logger.WithField("sstableCount", len(e.sstables)).
-			Info("SSTable count exceeded threshold, triggering compaction")
+	// Check if compaction is needed (for level 0)
+	if len(e.sstables[0]) >= e.config.CompactionThreshold {
+		e.logger.WithField("level0SSTableCount", len(e.sstables[0])).
+			Info("Level 0 SSTable count exceeded threshold, triggering compaction")
 		e.triggerCompaction()
 	}
 }
@@ -522,59 +591,310 @@ func (e *Engine) performCompaction() {
 	tracker := metrics.NewLatencyTracker()
 	e.logger.Info("Starting compaction")
 
+	switch e.config.CompactionStrategy {
+	case CompactionLevelBased:
+		e.performLevelBasedCompaction(tracker)
+	case CompactionSizeTiered:
+		e.performSizeTieredCompaction(tracker)
+	default:
+		e.performSimpleCompaction(tracker)
+	}
+}
+
+// performLevelBasedCompaction implements level-based compaction strategy.
+// Level 0 files are compacted into level 1, level 1 into level 2, etc.
+func (e *Engine) performLevelBasedCompaction(tracker *metrics.LatencyTracker) {
 	e.mutex.Lock()
 
-	// Check if compaction is needed
-	if len(e.sstables) < e.config.CompactionThreshold {
+	// Find the first level that needs compaction
+	sourceLevel := -1
+	for level := 0; level < len(e.sstables)-1; level++ {
+		maxFilesForLevel := e.maxFilesForLevel(level)
+		if len(e.sstables[level]) >= maxFilesForLevel {
+			sourceLevel = level
+			break
+		}
+	}
+
+	if sourceLevel == -1 {
 		e.mutex.Unlock()
-		e.logger.Debug("Compaction not needed, SSTable count below threshold")
+		e.logger.Debug("No compaction needed at any level")
 		return
 	}
 
+	targetLevel := sourceLevel + 1
 	e.logger.WithFields(map[string]interface{}{
-		"sstableCount": len(e.sstables),
-		"threshold":    e.config.CompactionThreshold,
-	}).Info("Compaction threshold reached")
+		"sourceLevel": sourceLevel,
+		"targetLevel": targetLevel,
+		"sourceCount": len(e.sstables[sourceLevel]),
+	}).Info("Level-based compaction starting")
 
-	// Select SSTables for compaction (simple strategy: compact all)
-	// In production, this would use level-based or size-tiered compaction
-	tablesToCompact := make([]*SSTable, len(e.sstables))
-	copy(tablesToCompact, e.sstables)
+	// Select SSTables from source level
+	sourceTables := make([]*SSTable, len(e.sstables[sourceLevel]))
+	copy(sourceTables, e.sstables[sourceLevel])
+
+	// Select overlapping SSTables from target level
+	targetTables := e.selectOverlappingSSTables(targetLevel, sourceTables)
 
 	e.mutex.Unlock()
 
-	// Perform compaction without holding the main lock
-	newSSTable, err := e.compactSSTables(tablesToCompact)
+	// Compact the selected tables
+	allTables := append(sourceTables, targetTables...)
+	newSSTables, err := e.compactSSTablesForLevel(allTables, targetLevel)
 	if err != nil {
-		e.logger.WithError(err).Error("Compaction failed")
+		e.logger.WithError(err).Error("Level-based compaction failed")
 		e.metrics.Storage().CompactionErrors.Add(1)
 		return
 	}
 
-	// Atomically update the engine state
+	// Update the engine state
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
-	// Replace old SSTables with the new one
-	oldSSTables := e.sstables
-	e.sstables = []*SSTable{newSSTable}
-	e.metrics.Storage().SSTableCount.Store(int64(len(e.sstables)))
+	// Remove compacted tables from source level
+	e.sstables[sourceLevel] = make([]*SSTable, 0)
 
-	// Update stats and metrics
+	// Remove compacted tables from target level
+	e.sstables[targetLevel] = e.removeCompactedTables(e.sstables[targetLevel], targetTables)
+
+	// Add new tables to target level
+	e.sstables[targetLevel] = append(e.sstables[targetLevel], newSSTables...)
+
+	// Update metrics
+	totalSSTables := 0
+	for level := range e.sstables {
+		totalSSTables += len(e.sstables[level])
+	}
+	e.metrics.Storage().SSTableCount.Store(int64(totalSSTables))
 	e.stats.CompactionCount++
 	e.metrics.Storage().CompactionCount.Add(1)
 	e.metrics.Storage().CompactionDurationNs.Store(tracker.Finish())
 
 	e.logger.WithFields(map[string]interface{}{
-		"oldCount": len(oldSSTables),
-		"newCount": 1,
-	}).Info("Compaction completed successfully")
+		"sourceLevel":    sourceLevel,
+		"targetLevel":    targetLevel,
+		"compactedCount": len(allTables),
+		"newCount":       len(newSSTables),
+	}).Info("Level-based compaction completed")
 
-	// Close and delete old SSTable files in background
-	go e.cleanupOldSSTables(oldSSTables)
+	// Clean up old tables
+	go e.cleanupOldSSTables(allTables)
 }
 
-// compactSSTables merges multiple SSTables into a single new SSTable.
+// performSimpleCompaction merges all SSTables in level 0 into one.
+func (e *Engine) performSimpleCompaction(tracker *metrics.LatencyTracker) {
+	e.mutex.Lock()
+
+	// Check if compaction is needed
+	if len(e.sstables[0]) < e.config.CompactionThreshold {
+		e.mutex.Unlock()
+		e.logger.Debug("Simple compaction not needed")
+		return
+	}
+
+	e.logger.WithField("sstableCount", len(e.sstables[0])).Info("Simple compaction starting")
+
+	tablesToCompact := make([]*SSTable, len(e.sstables[0]))
+	copy(tablesToCompact, e.sstables[0])
+
+	e.mutex.Unlock()
+
+	// Perform compaction
+	newSSTables, err := e.compactSSTablesForLevel(tablesToCompact, 0)
+	if err != nil {
+		e.logger.WithError(err).Error("Simple compaction failed")
+		e.metrics.Storage().CompactionErrors.Add(1)
+		return
+	}
+
+	// Update engine state
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+
+	e.sstables[0] = newSSTables
+
+	totalSSTables := 0
+	for level := range e.sstables {
+		totalSSTables += len(e.sstables[level])
+	}
+	e.metrics.Storage().SSTableCount.Store(int64(totalSSTables))
+	e.stats.CompactionCount++
+	e.metrics.Storage().CompactionCount.Add(1)
+	e.metrics.Storage().CompactionDurationNs.Store(tracker.Finish())
+
+	e.logger.WithFields(map[string]interface{}{
+		"oldCount": len(tablesToCompact),
+		"newCount": len(newSSTables),
+	}).Info("Simple compaction completed")
+
+	go e.cleanupOldSSTables(tablesToCompact)
+}
+
+// performSizeTieredCompaction implements size-tiered compaction (placeholder).
+func (e *Engine) performSizeTieredCompaction(tracker *metrics.LatencyTracker) {
+	// For now, fall back to simple compaction
+	e.performSimpleCompaction(tracker)
+}
+
+// maxFilesForLevel returns the maximum number of files allowed at a level.
+func (e *Engine) maxFilesForLevel(level int) int {
+	if level == 0 {
+		return e.config.CompactionThreshold
+	}
+	// Exponential growth: level 1 = 10 files, level 2 = 100 files, etc.
+	multiplier := e.config.LevelSizeMultiplier
+	if multiplier <= 0 {
+		multiplier = 10
+	}
+	result := e.config.CompactionThreshold
+	for i := 0; i < level; i++ {
+		result *= multiplier
+	}
+	return result
+}
+
+// selectOverlappingSSTables finds SSTables in targetLevel that overlap with sourceTables.
+func (e *Engine) selectOverlappingSSTables(targetLevel int, sourceTables []*SSTable) []*SSTable {
+	if targetLevel >= len(e.sstables) {
+		return []*SSTable{}
+	}
+
+	// Find min and max keys from source tables
+	var minKey, maxKey string
+	for _, sst := range sourceTables {
+		if minKey == "" || sst.minKey < minKey {
+			minKey = sst.minKey
+		}
+		if maxKey == "" || sst.maxKey > maxKey {
+			maxKey = sst.maxKey
+		}
+	}
+
+	// Select overlapping tables from target level
+	overlapping := make([]*SSTable, 0)
+	for _, sst := range e.sstables[targetLevel] {
+		// Check if key ranges overlap
+		if sst.maxKey >= minKey && sst.minKey <= maxKey {
+			overlapping = append(overlapping, sst)
+		}
+	}
+
+	return overlapping
+}
+
+// removeCompactedTables removes specified tables from a slice.
+func (e *Engine) removeCompactedTables(allTables []*SSTable, toRemove []*SSTable) []*SSTable {
+	removeMap := make(map[*SSTable]bool)
+	for _, sst := range toRemove {
+		removeMap[sst] = true
+	}
+
+	result := make([]*SSTable, 0)
+	for _, sst := range allTables {
+		if !removeMap[sst] {
+			result = append(result, sst)
+		}
+	}
+
+	return result
+}
+
+// compactSSTablesForLevel merges multiple SSTables into new SSTables for a specific level.
+func (e *Engine) compactSSTablesForLevel(tables []*SSTable, targetLevel int) ([]*SSTable, error) {
+	if len(tables) == 0 {
+		return nil, errors.New(errors.ErrCodeInternal, "no SSTables to compact")
+	}
+
+	e.logger.WithField("tableCount", len(tables)).Debug("Starting SSTable compaction for level")
+
+	// Create iterators for all SSTables
+	iterators := make([]Iterator, len(tables))
+	for i, table := range tables {
+		iterators[i] = NewSSTableIterator(table)
+	}
+
+	// Create merge iterator
+	mergeIterator := NewMergeIterator(iterators)
+	defer mergeIterator.Close()
+
+	// Create temporary MemTable to collect compacted entries
+	tempMemTable := NewMemTable()
+	processedCount := 0
+	tombstonesRemoved := 0
+
+	// Split into multiple SSTables if too large
+	newSSTables := make([]*SSTable, 0)
+	maxSSTableSize := e.config.SSTableMaxSize
+
+	for mergeIterator.Valid() {
+		entry := mergeIterator.Value()
+
+		// Skip expired tombstones
+		if entry.Deleted && entry.IsExpired(e.config.TombstoneTTL) {
+			tombstonesRemoved++
+			mergeIterator.Next()
+			continue
+		}
+
+		// Add entry to temporary MemTable
+		if err := tempMemTable.Put(*entry); err != nil {
+			e.logger.WithError(err).Error("Failed to add entry during compaction")
+			return nil, errors.Wrap(err, errors.ErrCodeCompactionFailed,
+				"failed to add entry during compaction")
+		}
+
+		processedCount++
+
+		// Check if we need to flush this MemTable to a new SSTable
+		if tempMemTable.Size() >= maxSSTableSize {
+			newSSTable, err := e.flushCompactedMemTable(tempMemTable, targetLevel)
+			if err != nil {
+				return nil, err
+			}
+			newSSTables = append(newSSTables, newSSTable)
+			tempMemTable = NewMemTable()
+		}
+
+		mergeIterator.Next()
+	}
+
+	// Flush remaining data
+	if tempMemTable.Size() > 0 {
+		newSSTable, err := e.flushCompactedMemTable(tempMemTable, targetLevel)
+		if err != nil {
+			return nil, err
+		}
+		newSSTables = append(newSSTables, newSSTable)
+	}
+
+	e.metrics.Storage().TombstonesCollected.Add(uint64(tombstonesRemoved))
+	e.logger.WithFields(map[string]interface{}{
+		"processedCount":     processedCount,
+		"tombstonesRemoved": tombstonesRemoved,
+		"newSSTableCount":   len(newSSTables),
+	}).Info("Compaction processing completed")
+
+	return newSSTables, nil
+}
+
+// flushCompactedMemTable creates an SSTable from a compacted MemTable.
+func (e *Engine) flushCompactedMemTable(memTable *MemTable, level int) (*SSTable, error) {
+	timestamp := time.Now().UnixNano()
+	compactedPath := filepath.Join(e.dataDir, "sstables",
+		fmt.Sprintf("compacted_L%d_%d.db", level, timestamp))
+
+	newSSTable, err := CreateSSTable(memTable, compactedPath, e.config)
+	if err != nil {
+		e.logger.WithError(err).Error("Failed to create compacted SSTable")
+		return nil, errors.Wrap(err, errors.ErrCodeCompactionFailed,
+			"failed to create compacted SSTable")
+	}
+
+	newSSTable.level = level
+	return newSSTable, nil
+}
+
+// compactSSTables merges multiple SSTables into a single new SSTable (legacy, for backwards compatibility).
 func (e *Engine) compactSSTables(tables []*SSTable) (*SSTable, error) {
 	if len(tables) == 0 {
 		return nil, errors.New(errors.ErrCodeInternal, "no SSTables to compact")
@@ -642,13 +962,30 @@ func (e *Engine) compactSSTables(tables []*SSTable) (*SSTable, error) {
 }
 
 // cleanupOldSSTables closes and deletes old SSTable files after compaction.
-func (e *Engine) cleanupOldSSTables(oldTables []*SSTable) {
-	e.logger.WithField("tableCount", len(oldTables)).Debug("Cleaning up old SSTables")
+func (e *Engine) cleanupOldSSTables(oldTables interface{}) {
+	// Handle both []*SSTable and [][]*SSTable
+	var tables []*SSTable
+	switch v := oldTables.(type) {
+	case []*SSTable:
+		tables = v
+	case [][]*SSTable:
+		for _, level := range v {
+			tables = append(tables, level...)
+		}
+	default:
+		e.logger.Error("Invalid type for oldTables in cleanupOldSSTables")
+		return
+	}
+
+	if len(tables) == 0 {
+		return
+	}
+	e.logger.WithField("tableCount", len(tables)).Debug("Cleaning up old SSTables")
 
 	successCount := 0
 	errorCount := 0
 
-	for _, table := range oldTables {
+	for _, table := range tables {
 		// Close the SSTable
 		if err := table.Close(); err != nil {
 			e.logger.WithError(err).WithField("path", table.filePath).
@@ -682,19 +1019,30 @@ func (e *Engine) cleanupOldSSTables(oldTables []*SSTable) {
 
 // loadExistingSSTables scans the data directory and opens existing SSTables.
 func (e *Engine) loadExistingSSTables() error {
-	files, err := filepath.Glob(filepath.Join(e.dataDir, "*.db"))
+	sstablesDir := filepath.Join(e.dataDir, "sstables")
+	files, err := filepath.Glob(filepath.Join(sstablesDir, "*.db"))
 	if err != nil {
 		return err
 	}
-	
+
+	e.logger.WithField("fileCount", len(files)).Debug("Loading existing SSTables")
+
 	for _, filePath := range files {
 		sstable, err := OpenSSTable(filePath)
 		if err != nil {
-			// Log warning in production, skip corrupted files
+			e.logger.WithError(err).WithField("path", filePath).
+				Warn("Failed to open SSTable, skipping")
 			continue
 		}
-		e.sstables = append(e.sstables, sstable)
+
+		// Add to appropriate level
+		level := sstable.level
+		if level < 0 || level >= len(e.sstables) {
+			e.logger.WithField("level", level).Warn("Invalid SSTable level, adding to level 0")
+			level = 0
+		}
+		e.sstables[level] = append(e.sstables[level], sstable)
 	}
-	
+
 	return nil
 }

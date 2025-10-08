@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	pb "distkv/proto"
 )
 
@@ -44,8 +43,8 @@ type Gossip struct {
 	// started indicates if the gossip protocol is running
 	started bool
 
-	// connections caches gRPC connections to other nodes
-	connections map[string]*grpc.ClientConn
+	// connectionPool manages reusable gRPC connections with health checking
+	connectionPool *ConnectionPool
 	connectionsMutex sync.RWMutex
 
 	// logger is the component logger
@@ -83,6 +82,14 @@ func NewGossip(nodeID, address string, config *GossipConfig) *Gossip {
 	localNode := NewNodeInfo(nodeID, address)
 	logger.Info("Creating new gossip instance")
 
+	// Create connection pool with configuration
+	poolConfig := &ConnectionPoolConfig{
+		MaxConnections:    100,
+		MaxIdleTime:       5 * time.Minute,
+		HealthCheckPeriod: 30 * time.Second,
+		DialTimeout:       5 * time.Second,
+	}
+
 	return &Gossip{
 		localNode:      localNode,
 		nodes:          make(map[string]*NodeInfo),
@@ -90,7 +97,7 @@ func NewGossip(nodeID, address string, config *GossipConfig) *Gossip {
 		stopChan:       make(chan struct{}),
 		eventCallbacks: make([]NodeEventCallback, 0),
 		started:        false,
-		connections:    make(map[string]*grpc.ClientConn),
+		connectionPool: NewConnectionPool(poolConfig, logger),
 		logger:         logger,
 		metrics:        metrics.GetGlobalMetrics(),
 	}
@@ -152,18 +159,11 @@ func (g *Gossip) Stop() error {
 		g.logger.Warn("Timeout waiting for background workers to stop")
 	}
 
-	// Close all gRPC connections
-	g.connectionsMutex.Lock()
-	connectionCount := len(g.connections)
-	g.logger.WithField("connectionCount", connectionCount).Debug("Closing gRPC connections")
-	for address, conn := range g.connections {
-		if err := conn.Close(); err != nil {
-			g.logger.WithError(err).WithField("address", address).
-				Warn("Error closing gRPC connection")
-		}
+	// Close connection pool
+	g.logger.Debug("Closing connection pool")
+	if err := g.connectionPool.Close(); err != nil {
+		g.logger.WithError(err).Warn("Error closing connection pool")
 	}
-	g.connections = make(map[string]*grpc.ClientConn)
-	g.connectionsMutex.Unlock()
 
 	g.logger.Info("Gossip protocol stopped successfully")
 	return nil
@@ -526,31 +526,9 @@ func (g *Gossip) sendGossipToNode(targetNode *NodeInfo, message *GossipMessageDa
 	g.processGossipResponse(targetNode.NodeID, response)
 }
 
-// getConnection gets or creates a gRPC connection to the specified address.
+// getConnection gets a gRPC connection from the pool.
 func (g *Gossip) getConnection(address string) (*grpc.ClientConn, error) {
-	g.connectionsMutex.RLock()
-	if conn, exists := g.connections[address]; exists {
-		g.connectionsMutex.RUnlock()
-		return conn, nil
-	}
-	g.connectionsMutex.RUnlock()
-	
-	// Need to create new connection
-	g.connectionsMutex.Lock()
-	defer g.connectionsMutex.Unlock()
-	
-	// Double-check in case another goroutine created it
-	if conn, exists := g.connections[address]; exists {
-		return conn, nil
-	}
-	
-	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, err
-	}
-	
-	g.connections[address] = conn
-	return conn, nil
+	return g.connectionPool.GetConnection(address)
 }
 
 // markNodeSuspect marks a node as suspect when we can't communicate with it.

@@ -34,10 +34,10 @@ func NewBloomFilter(expectedKeys int, bitsPerKey int) *BloomFilter {
 	if bitsPerKey <= 0 {
 		bitsPerKey = 10 // Default from our config
 	}
-	
+
 	// Calculate optimal filter size
 	size := uint(expectedKeys * bitsPerKey)
-	
+
 	// Calculate optimal number of hash functions
 	// Formula: k = (m/n) * ln(2), where m=bits, n=keys
 	hashFunctions := uint(float64(bitsPerKey) * math.Ln2)
@@ -47,12 +47,57 @@ func NewBloomFilter(expectedKeys int, bitsPerKey int) *BloomFilter {
 	if hashFunctions > 10 {
 		hashFunctions = 10 // Cap at 10 for performance
 	}
-	
+
 	return &BloomFilter{
 		bitArray:      make([]bool, size),
 		size:          size,
 		hashFunctions: hashFunctions,
 		bitsPerKey:    uint(bitsPerKey),
+	}
+}
+
+// NewBloomFilterWithFPR creates a bloom filter optimized for a target false positive rate.
+// expectedKeys: how many keys we expect to store
+// targetFPR: target false positive rate (e.g., 0.01 for 1%)
+func NewBloomFilterWithFPR(expectedKeys int, targetFPR float64) *BloomFilter {
+	if expectedKeys <= 0 {
+		expectedKeys = 1000
+	}
+	if targetFPR <= 0 || targetFPR >= 1 {
+		targetFPR = 0.01 // Default 1% false positive rate
+	}
+
+	// Calculate optimal number of bits
+	// Formula: m = -n * ln(p) / (ln(2))^2
+	// where m=bits, n=keys, p=target false positive rate
+	ln2Squared := math.Ln2 * math.Ln2
+	optimalBits := -float64(expectedKeys) * math.Log(targetFPR) / ln2Squared
+	size := uint(math.Ceil(optimalBits))
+
+	// Calculate optimal number of hash functions
+	// Formula: k = (m/n) * ln(2)
+	optimalHashFunctions := (float64(size) / float64(expectedKeys)) * math.Ln2
+	hashFunctions := uint(math.Ceil(optimalHashFunctions))
+
+	// Cap hash functions for performance
+	if hashFunctions == 0 {
+		hashFunctions = 1
+	}
+	if hashFunctions > 10 {
+		hashFunctions = 10
+	}
+
+	// Calculate effective bits per key
+	bitsPerKey := uint(size / uint(expectedKeys))
+	if bitsPerKey == 0 {
+		bitsPerKey = 1
+	}
+
+	return &BloomFilter{
+		bitArray:      make([]bool, size),
+		size:          size,
+		hashFunctions: hashFunctions,
+		bitsPerKey:    bitsPerKey,
 	}
 }
 

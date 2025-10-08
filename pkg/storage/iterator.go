@@ -316,9 +316,11 @@ func NewEngineIterator(engine *Engine) (*EngineIterator, error) {
 		iterators = append(iterators, NewMemTableIterator(memTable))
 	}
 
-	// Add SSTable iterators (newest first for proper conflict resolution)
-	for i := len(engine.sstables) - 1; i >= 0; i-- {
-		iterators = append(iterators, NewSSTableIterator(engine.sstables[i]))
+	// Add SSTable iterators (newest level/files first for proper conflict resolution)
+	for level := 0; level < len(engine.sstables); level++ {
+		for i := len(engine.sstables[level]) - 1; i >= 0; i-- {
+			iterators = append(iterators, NewSSTableIterator(engine.sstables[level][i]))
+		}
 	}
 
 	if len(iterators) == 0 {

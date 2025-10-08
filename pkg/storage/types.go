@@ -54,25 +54,41 @@ func (e *Entry) IsExpired(ttl time.Duration) bool {
 	return time.Now().After(expiryTime)
 }
 
+// CompactionStrategy defines the compaction strategy type
+type CompactionStrategy int
+
+const (
+	// CompactionSimple merges all SSTables into one
+	CompactionSimple CompactionStrategy = iota
+	// CompactionLevelBased uses level-based compaction (better for read-heavy workloads)
+	CompactionLevelBased
+	// CompactionSizeTiered uses size-tiered compaction (better for write-heavy workloads)
+	CompactionSizeTiered
+)
+
 // StorageConfig holds configuration parameters for the storage engine.
 type StorageConfig struct {
 	// MemTable settings
 	MemTableMaxSize    int           // Max size of MemTable before flush (bytes)
 	MaxMemTables       int           // Max number of MemTables to keep
-	
-	// SSTable settings  
+
+	// SSTable settings
 	SSTableMaxSize     int64         // Max size of individual SSTable files
 	BloomFilterBits    int           // Bits per key in Bloom filter
+	BloomFilterFPR     float64       // Target false positive rate for Bloom filter
 	CompressionEnabled bool          // Whether to compress SSTable blocks
-	
+
 	// Compaction settings
-	CompactionThreshold int          // Number of SSTables to trigger compaction
-	MaxCompactionSize   int64        // Max total size for a compaction operation
-	
+	CompactionStrategy  CompactionStrategy // Compaction strategy to use
+	CompactionThreshold int                // Number of SSTables to trigger compaction
+	MaxCompactionSize   int64              // Max total size for a compaction operation
+	LevelSizeMultiplier int                // Size multiplier between levels (for level-based)
+	MaxLevels           int                // Maximum number of levels (for level-based)
+
 	// Garbage collection
 	TombstoneTTL       time.Duration // How long to keep deletion markers
 	GCInterval         time.Duration // How often to run garbage collection
-	
+
 	// Performance tuning
 	WriteBufferSize    int           // Size of write-ahead log buffer
 	CacheSize          int           // Size of block cache
@@ -85,20 +101,24 @@ func DefaultStorageConfig() *StorageConfig {
 		// MemTable: 64MB max, keep up to 2 in memory
 		MemTableMaxSize:     64 * 1024 * 1024, // 64MB
 		MaxMemTables:        2,
-		
-		// SSTable: 256MB files, 10 bits per Bloom filter key
+
+		// SSTable: 256MB files, 10 bits per Bloom filter key, 1% false positive rate
 		SSTableMaxSize:      256 * 1024 * 1024, // 256MB
 		BloomFilterBits:     10,
+		BloomFilterFPR:      0.01, // 1% false positive rate
 		CompressionEnabled:  true,
-		
-		// Compaction: trigger at 4 files, max 1GB per operation
+
+		// Compaction: level-based strategy, trigger at 4 files, max 1GB per operation
+		CompactionStrategy:  CompactionLevelBased,
 		CompactionThreshold: 4,
 		MaxCompactionSize:   1024 * 1024 * 1024, // 1GB
-		
+		LevelSizeMultiplier: 10,
+		MaxLevels:           7,
+
 		// GC: keep tombstones for 3 hours, run GC every 1 hour
 		TombstoneTTL:        3 * time.Hour,
 		GCInterval:          1 * time.Hour,
-		
+
 		// Performance: 4MB write buffer, 128MB cache, 1000 open files
 		WriteBufferSize:     4 * 1024 * 1024,   // 4MB
 		CacheSize:          128 * 1024 * 1024,  // 128MB
@@ -162,4 +182,8 @@ type StorageStats struct {
 	// Error counters
 	ReadErrors       int64 // Number of failed read operations
 	WriteErrors      int64 // Number of failed write operations
+
+	// Memory usage
+	MemoryUsage      int64 // Total tracked memory usage
+	HeapUsage        int64 // Heap memory usage
 }
