@@ -1,16 +1,16 @@
 // Unit tests for the metrics package
-package metrics_test
+package metrics
 
 import (
 	"testing"
 	"time"
 
-	"distkv/pkg/metrics"
+	
 )
 
 // TestNewMetricsCollector tests creating a new metrics collector
 func TestNewMetricsCollector(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 
 	if mc == nil {
 		t.Fatal("Expected non-nil metrics collector")
@@ -44,7 +44,7 @@ func TestNewMetricsCollector(t *testing.T) {
 
 // TestStorageMetrics tests storage metrics operations
 func TestStorageMetrics(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 	storage := mc.Storage()
 
 	t.Run("ReadOps", func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestStorageMetrics(t *testing.T) {
 
 // TestReplicationMetrics tests replication metrics
 func TestReplicationMetrics(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 	repl := mc.Replication()
 
 	t.Run("QuorumWriteMetrics", func(t *testing.T) {
@@ -217,7 +217,7 @@ func TestReplicationMetrics(t *testing.T) {
 
 // TestGossipMetrics tests gossip protocol metrics
 func TestGossipMetrics(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 	gossip := mc.Gossip()
 
 	t.Run("NodeCounts", func(t *testing.T) {
@@ -287,7 +287,7 @@ func TestGossipMetrics(t *testing.T) {
 
 // TestNetworkMetrics tests network metrics
 func TestNetworkMetrics(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 	network := mc.Network()
 
 	t.Run("ConnectionMetrics", func(t *testing.T) {
@@ -348,7 +348,7 @@ func TestNetworkMetrics(t *testing.T) {
 
 // TestSystemMetrics tests system-level metrics
 func TestSystemMetrics(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 	system := mc.System()
 
 	t.Run("HealthStatus", func(t *testing.T) {
@@ -404,7 +404,7 @@ func TestSystemMetrics(t *testing.T) {
 
 // TestSnapshot tests taking metrics snapshots
 func TestSnapshot(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 
 	// Set some metrics
 	mc.Storage().ReadOps.Add(100)
@@ -482,8 +482,8 @@ func TestSnapshot(t *testing.T) {
 
 // TestGlobalMetrics tests global metrics singleton
 func TestGlobalMetrics(t *testing.T) {
-	mc1 := metrics.GetGlobalMetrics()
-	mc2 := metrics.GetGlobalMetrics()
+	mc1 := GetGlobalMetrics()
+	mc2 := GetGlobalMetrics()
 
 	if mc1 != mc2 {
 		t.Error("Expected same global metrics instance")
@@ -496,7 +496,7 @@ func TestGlobalMetrics(t *testing.T) {
 
 // TestLatencyTracker tests latency tracking utility
 func TestLatencyTracker(t *testing.T) {
-	tracker := metrics.NewLatencyTracker()
+	tracker := NewLatencyTracker()
 
 	if tracker == nil {
 		t.Fatal("Expected non-nil latency tracker")
@@ -520,7 +520,7 @@ func TestLatencyTracker(t *testing.T) {
 // TestTrackOperation tests operation tracking
 func TestTrackOperation(t *testing.T) {
 	t.Run("successful operation", func(t *testing.T) {
-		err := metrics.TrackOperation("test-op", func() error {
+		err := TrackOperation("test-op", func() error {
 			time.Sleep(5 * time.Millisecond)
 			return nil
 		})
@@ -532,7 +532,7 @@ func TestTrackOperation(t *testing.T) {
 
 	t.Run("failed operation", func(t *testing.T) {
 		expectedErr := &testError{msg: "test error"}
-		err := metrics.TrackOperation("test-op", func() error {
+		err := TrackOperation("test-op", func() error {
 			return expectedErr
 		})
 
@@ -544,7 +544,7 @@ func TestTrackOperation(t *testing.T) {
 
 // TestConcurrentAccess tests concurrent metric updates
 func TestConcurrentAccess(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 	iterations := 1000
 	goroutines := 10
 
@@ -583,7 +583,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 // TestZeroValues tests that metrics start at zero
 func TestZeroValues(t *testing.T) {
-	mc := metrics.NewMetricsCollector()
+	mc := NewMetricsCollector()
 
 	if mc.Storage().ReadOps.Load() != 0 {
 		t.Error("ReadOps should start at 0")

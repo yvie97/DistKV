@@ -1,5 +1,5 @@
 // Unit tests for the logging package
-package logging_test
+package logging
 
 import (
 	"bytes"
@@ -7,20 +7,20 @@ import (
 	"strings"
 	"testing"
 
-	"distkv/pkg/logging"
+	
 )
 
 // TestLogLevelString tests log level string representations
 func TestLogLevelString(t *testing.T) {
 	tests := []struct {
-		level    logging.LogLevel
+		level    LogLevel
 		expected string
 	}{
-		{logging.DEBUG, "DEBUG"},
-		{logging.INFO, "INFO"},
-		{logging.WARN, "WARN"},
-		{logging.ERROR, "ERROR"},
-		{logging.FATAL, "FATAL"},
+		{DEBUG, "DEBUG"},
+		{INFO, "INFO"},
+		{WARN, "WARN"},
+		{ERROR, "ERROR"},
+		{FATAL, "FATAL"},
 	}
 
 	for _, tt := range tests {
@@ -35,14 +35,14 @@ func TestLogLevelString(t *testing.T) {
 // TestNewLogger tests creating a new logger
 func TestNewLogger(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:      logging.INFO,
+	config := &LogConfig{
+		Level:      INFO,
 		Component:  "test",
 		Output:     &buf,
 		TimeFormat: "2006-01-02 15:04:05",
 	}
 
-	logger := logging.NewLogger(config)
+	logger := NewLogger(config)
 	if logger == nil {
 		t.Fatal("Expected non-nil logger")
 	}
@@ -65,9 +65,9 @@ func TestNewLogger(t *testing.T) {
 
 // TestDefaultConfig tests default configuration
 func TestDefaultConfig(t *testing.T) {
-	config := logging.DefaultLogConfig()
+	config := DefaultLogConfig()
 
-	if config.Level != logging.INFO {
+	if config.Level != INFO {
 		t.Errorf("Expected default level INFO, got %v", config.Level)
 	}
 
@@ -84,39 +84,39 @@ func TestDefaultConfig(t *testing.T) {
 func TestLogLevelFiltering(t *testing.T) {
 	tests := []struct {
 		name          string
-		configLevel   logging.LogLevel
-		logLevel      logging.LogLevel
+		configLevel   LogLevel
+		logLevel      LogLevel
 		shouldLog     bool
 	}{
-		{"DEBUG logs at DEBUG level", logging.DEBUG, logging.DEBUG, true},
-		{"INFO logs at DEBUG level", logging.DEBUG, logging.INFO, true},
-		{"DEBUG doesn't log at INFO level", logging.INFO, logging.DEBUG, false},
-		{"INFO logs at INFO level", logging.INFO, logging.INFO, true},
-		{"WARN logs at INFO level", logging.INFO, logging.WARN, true},
-		{"ERROR logs at INFO level", logging.INFO, logging.ERROR, true},
-		{"INFO doesn't log at ERROR level", logging.ERROR, logging.INFO, false},
+		{"DEBUG logs at DEBUG level", DEBUG, DEBUG, true},
+		{"INFO logs at DEBUG level", DEBUG, INFO, true},
+		{"DEBUG doesn't log at INFO level", INFO, DEBUG, false},
+		{"INFO logs at INFO level", INFO, INFO, true},
+		{"WARN logs at INFO level", INFO, WARN, true},
+		{"ERROR logs at INFO level", INFO, ERROR, true},
+		{"INFO doesn't log at ERROR level", ERROR, INFO, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			config := &logging.LogConfig{
+			config := &LogConfig{
 				Level:     tt.configLevel,
 				Component: "test",
 				Output:    &buf,
 			}
 
-			logger := logging.NewLogger(config)
+			logger := NewLogger(config)
 			message := "test message"
 
 			switch tt.logLevel {
-			case logging.DEBUG:
+			case DEBUG:
 				logger.Debug(message)
-			case logging.INFO:
+			case INFO:
 				logger.Info(message)
-			case logging.WARN:
+			case WARN:
 				logger.Warn(message)
-			case logging.ERROR:
+			case ERROR:
 				logger.Error(message)
 			}
 
@@ -137,13 +137,13 @@ func TestLogLevelFiltering(t *testing.T) {
 // TestWithComponent tests creating logger with component
 func TestWithComponent(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "original",
 		Output:    &buf,
 	}
 
-	logger := logging.NewLogger(config)
+	logger := NewLogger(config)
 	newLogger := logger.WithComponent("new-component")
 
 	newLogger.Info("test message")
@@ -161,13 +161,13 @@ func TestWithComponent(t *testing.T) {
 // TestWithField tests adding single field
 func TestWithField(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logger := logging.NewLogger(config)
+	logger := NewLogger(config)
 	fieldLogger := logger.WithField("requestID", "12345")
 
 	fieldLogger.Info("processing request")
@@ -181,13 +181,13 @@ func TestWithField(t *testing.T) {
 // TestWithFields tests adding multiple fields
 func TestWithFields(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logger := logging.NewLogger(config)
+	logger := NewLogger(config)
 	fields := map[string]interface{}{
 		"userID":    "user123",
 		"sessionID": "session456",
@@ -214,13 +214,13 @@ func TestWithFields(t *testing.T) {
 // TestWithError tests adding error field
 func TestWithError(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logger := logging.NewLogger(config)
+	logger := NewLogger(config)
 	err := fmt.Errorf("database connection failed")
 	errorLogger := logger.WithError(err)
 
@@ -245,13 +245,13 @@ func TestWithError(t *testing.T) {
 // TestSetLevel tests changing log level dynamically
 func TestSetLevel(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logger := logging.NewLogger(config)
+	logger := NewLogger(config)
 
 	// Debug should not log at INFO level
 	logger.Debug("debug message 1")
@@ -261,7 +261,7 @@ func TestSetLevel(t *testing.T) {
 
 	// Change to DEBUG level
 	buf.Reset()
-	logger.SetLevel(logging.DEBUG)
+	logger.SetLevel(DEBUG)
 	logger.Debug("debug message 2")
 
 	if !strings.Contains(buf.String(), "debug message 2") {
@@ -272,13 +272,13 @@ func TestSetLevel(t *testing.T) {
 // TestFormattedLogging tests formatted log methods
 func TestFormattedLogging(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logger := logging.NewLogger(config)
+	logger := NewLogger(config)
 
 	tests := []struct {
 		name     string
@@ -288,7 +288,7 @@ func TestFormattedLogging(t *testing.T) {
 		{
 			name: "Debugf",
 			logFunc: func() {
-				logger.SetLevel(logging.DEBUG)
+				logger.SetLevel(DEBUG)
 				logger.Debugf("count: %d, name: %s", 42, "test")
 			},
 			expected: "count: 42, name: test",
@@ -334,13 +334,13 @@ func TestFormattedLogging(t *testing.T) {
 // TestCallerInformation tests that caller information is included
 func TestCallerInformation(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logger := logging.NewLogger(config)
+	logger := NewLogger(config)
 	logger.Info("test message")
 	output := buf.String()
 
@@ -358,13 +358,13 @@ func TestCallerInformation(t *testing.T) {
 // TestLoggerImmutability tests that logger methods return new instances
 func TestLoggerImmutability(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "original",
 		Output:    &buf,
 	}
 
-	logger1 := logging.NewLogger(config)
+	logger1 := NewLogger(config)
 	logger2 := logger1.WithComponent("component2")
 	logger3 := logger2.WithField("key", "value")
 
@@ -397,20 +397,20 @@ func TestLoggerImmutability(t *testing.T) {
 func TestGlobalLogger(t *testing.T) {
 	// Reset global logger for test isolation
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "global-test",
 		Output:    &buf,
 	}
 
-	logging.InitGlobalLogger(config)
-	globalLogger := logging.GetGlobalLogger()
+	InitGlobalLogger(config)
+	globalLogger := GetGlobalLogger()
 
 	if globalLogger == nil {
 		t.Fatal("Expected non-nil global logger")
 	}
 
-	logging.Info("global test message")
+	Info("global test message")
 	output := buf.String()
 
 	if !strings.Contains(output, "global test message") {
@@ -421,23 +421,23 @@ func TestGlobalLogger(t *testing.T) {
 // TestPackageLevelFunctions tests package-level convenience functions
 func TestPackageLevelFunctions(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.DEBUG,
+	config := &LogConfig{
+		Level:     DEBUG,
 		Component: "package-test",
 		Output:    &buf,
 	}
 
-	logging.InitGlobalLogger(config)
+	InitGlobalLogger(config)
 
 	tests := []struct {
 		name    string
 		logFunc func()
 		level   string
 	}{
-		{"Debug", func() { logging.Debug("debug msg") }, "DEBUG"},
-		{"Info", func() { logging.Info("info msg") }, "INFO"},
-		{"Warn", func() { logging.Warn("warn msg") }, "WARN"},
-		{"Error", func() { logging.Error("error msg") }, "ERROR"},
+		{"Debug", func() { Debug("debug msg") }, "DEBUG"},
+		{"Info", func() { Info("info msg") }, "INFO"},
+		{"Warn", func() { Warn("warn msg") }, "WARN"},
+		{"Error", func() { Error("error msg") }, "ERROR"},
 	}
 
 	for _, tt := range tests {
@@ -456,33 +456,33 @@ func TestPackageLevelFunctions(t *testing.T) {
 // TestFormattedPackageFunctions tests formatted package-level functions
 func TestFormattedPackageFunctions(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.DEBUG,
+	config := &LogConfig{
+		Level:     DEBUG,
 		Component: "package-test",
 		Output:    &buf,
 	}
 
-	logging.InitGlobalLogger(config)
+	InitGlobalLogger(config)
 
-	logging.Debugf("value: %d", 42)
+	Debugf("value: %d", 42)
 	if !strings.Contains(buf.String(), "value: 42") {
 		t.Error("Debugf failed")
 	}
 
 	buf.Reset()
-	logging.Infof("user: %s", "alice")
+	Infof("user: %s", "alice")
 	if !strings.Contains(buf.String(), "user: alice") {
 		t.Error("Infof failed")
 	}
 
 	buf.Reset()
-	logging.Warnf("count: %d", 100)
+	Warnf("count: %d", 100)
 	if !strings.Contains(buf.String(), "count: 100") {
 		t.Error("Warnf failed")
 	}
 
 	buf.Reset()
-	logging.Errorf("error code: %d", 404)
+	Errorf("error code: %d", 404)
 	if !strings.Contains(buf.String(), "error code: 404") {
 		t.Error("Errorf failed")
 	}
@@ -491,15 +491,15 @@ func TestFormattedPackageFunctions(t *testing.T) {
 // TestWithComponentPackageLevel tests package-level WithComponent
 func TestWithComponentPackageLevel(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "default",
 		Output:    &buf,
 	}
 
-	logging.InitGlobalLogger(config)
+	InitGlobalLogger(config)
 
-	componentLogger := logging.WithComponent("custom-component")
+	componentLogger := WithComponent("custom-component")
 	componentLogger.Info("test message")
 
 	output := buf.String()
@@ -511,17 +511,17 @@ func TestWithComponentPackageLevel(t *testing.T) {
 // TestWithFieldsPackageLevel tests package-level field methods
 func TestWithFieldsPackageLevel(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logging.InitGlobalLogger(config)
+	InitGlobalLogger(config)
 
 	// Test WithField
 	buf.Reset()
-	fieldLogger := logging.WithField("key", "value")
+	fieldLogger := WithField("key", "value")
 	fieldLogger.Info("message")
 	if !strings.Contains(buf.String(), "key=value") {
 		t.Error("WithField failed")
@@ -529,7 +529,7 @@ func TestWithFieldsPackageLevel(t *testing.T) {
 
 	// Test WithFields
 	buf.Reset()
-	fieldsLogger := logging.WithFields(map[string]interface{}{
+	fieldsLogger := WithFields(map[string]interface{}{
 		"field1": "value1",
 		"field2": 123,
 	})
@@ -542,7 +542,7 @@ func TestWithFieldsPackageLevel(t *testing.T) {
 	// Test WithError
 	buf.Reset()
 	err := fmt.Errorf("test error")
-	errorLogger := logging.WithError(err)
+	errorLogger := WithError(err)
 	errorLogger.Info("message")
 	if !strings.Contains(buf.String(), "test error") {
 		t.Error("WithError failed")
@@ -552,24 +552,24 @@ func TestWithFieldsPackageLevel(t *testing.T) {
 // TestSetGlobalLevel tests changing global log level
 func TestSetGlobalLevel(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logging.InitGlobalLogger(config)
+	InitGlobalLogger(config)
 
 	// Debug should not log at INFO level
-	logging.Debug("debug1")
+	Debug("debug1")
 	if strings.Contains(buf.String(), "debug1") {
 		t.Error("Debug should not log at INFO level")
 	}
 
 	// Change to DEBUG level
 	buf.Reset()
-	logging.SetGlobalLevel(logging.DEBUG)
-	logging.Debug("debug2")
+	SetGlobalLevel(DEBUG)
+	Debug("debug2")
 
 	if !strings.Contains(buf.String(), "debug2") {
 		t.Error("Debug should log at DEBUG level")
@@ -579,14 +579,14 @@ func TestSetGlobalLevel(t *testing.T) {
 // TestLegacyAdapter tests compatibility with standard log package
 func TestLegacyAdapter(t *testing.T) {
 	var buf bytes.Buffer
-	config := &logging.LogConfig{
-		Level:     logging.INFO,
+	config := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
 
-	logger := logging.NewLogger(config)
-	adapter := logging.NewLegacyAdapter(logger)
+	logger := NewLogger(config)
+	adapter := NewLegacyAdapter(logger)
 
 	message := "legacy log message\n"
 	n, err := adapter.Write([]byte(message))
@@ -607,19 +607,19 @@ func TestLegacyAdapter(t *testing.T) {
 
 // TestNilConfig tests that nil config uses defaults
 func TestNilConfig(t *testing.T) {
-	logger := logging.NewLogger(nil)
+	logger := NewLogger(nil)
 	if logger == nil {
 		t.Fatal("Expected non-nil logger with nil config")
 	}
 
 	// Should not panic and should use defaults
 	var buf bytes.Buffer
-	testLogger := &logging.LogConfig{
-		Level:     logging.INFO,
+	testLogger := &LogConfig{
+		Level:     INFO,
 		Component: "test",
 		Output:    &buf,
 	}
-	logger = logging.NewLogger(testLogger)
+	logger = NewLogger(testLogger)
 	logger.Info("test")
 
 	if buf.Len() == 0 {

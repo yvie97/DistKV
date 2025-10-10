@@ -1,25 +1,23 @@
 // Unit tests for the errors package
-package errors_test
+package errors
 
 import (
 	stderrors "errors"
 	"fmt"
 	"strings"
 	"testing"
-
-	"distkv/pkg/errors"
 )
 
 // TestNew tests creating a new DistKVError
 func TestNew(t *testing.T) {
-	err := errors.New(errors.ErrCodeKeyNotFound, "test error message")
+	err := New(ErrCodeKeyNotFound, "test error message")
 
 	if err == nil {
 		t.Fatal("Expected non-nil error")
 	}
 
-	if err.Code != errors.ErrCodeKeyNotFound {
-		t.Errorf("Expected code %s, got %s", errors.ErrCodeKeyNotFound, err.Code)
+	if err.Code != ErrCodeKeyNotFound {
+		t.Errorf("Expected code %s, got %s", ErrCodeKeyNotFound, err.Code)
 	}
 
 	if err.Message != "test error message" {
@@ -43,12 +41,12 @@ func TestNew(t *testing.T) {
 func TestError(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      *errors.DistKVError
+		err      *DistKVError
 		contains []string
 	}{
 		{
 			name: "simple error",
-			err:  errors.New(errors.ErrCodeInternal, "something went wrong"),
+			err:  New(ErrCodeInternal, "something went wrong"),
 			contains: []string{
 				"[INTERNAL_ERROR]",
 				"something went wrong",
@@ -56,7 +54,7 @@ func TestError(t *testing.T) {
 		},
 		{
 			name: "error with context",
-			err: errors.New(errors.ErrCodeKeyNotFound, "key missing").
+			err: New(ErrCodeKeyNotFound, "key missing").
 				WithContext("key", "user:123"),
 			contains: []string{
 				"[KEY_NOT_FOUND]",
@@ -66,9 +64,9 @@ func TestError(t *testing.T) {
 		},
 		{
 			name: "error with cause",
-			err: errors.Wrap(
+			err: Wrap(
 				fmt.Errorf("original error"),
-				errors.ErrCodeConnectionFailed,
+				ErrCodeConnectionFailed,
 				"failed to connect",
 			),
 			contains: []string{
@@ -79,7 +77,7 @@ func TestError(t *testing.T) {
 		},
 		{
 			name: "error with multiple context fields",
-			err: errors.New(errors.ErrCodeQuorumFailed, "quorum not met").
+			err: New(ErrCodeQuorumFailed, "quorum not met").
 				WithContext("needed", 3).
 				WithContext("got", 2),
 			contains: []string{
@@ -107,10 +105,10 @@ func TestError(t *testing.T) {
 func TestWrap(t *testing.T) {
 	t.Run("wrap standard error", func(t *testing.T) {
 		originalErr := fmt.Errorf("database connection failed")
-		wrapped := errors.Wrap(originalErr, errors.ErrCodeConnectionFailed, "connection error")
+		wrapped := Wrap(originalErr, ErrCodeConnectionFailed, "connection error")
 
-		if wrapped.Code != errors.ErrCodeConnectionFailed {
-			t.Errorf("Expected code %s, got %s", errors.ErrCodeConnectionFailed, wrapped.Code)
+		if wrapped.Code != ErrCodeConnectionFailed {
+			t.Errorf("Expected code %s, got %s", ErrCodeConnectionFailed, wrapped.Code)
 		}
 
 		if wrapped.Cause != originalErr {
@@ -123,9 +121,9 @@ func TestWrap(t *testing.T) {
 	})
 
 	t.Run("wrap DistKVError", func(t *testing.T) {
-		innerErr := errors.New(errors.ErrCodeStorageClosed, "storage is closed").
+		innerErr := New(ErrCodeStorageClosed, "storage is closed").
 			WithRetryable(true)
-		wrapped := errors.Wrap(innerErr, errors.ErrCodeInternal, "operation failed")
+		wrapped := Wrap(innerErr, ErrCodeInternal, "operation failed")
 
 		if wrapped.Retryable != true {
 			t.Error("Expected retryable to be preserved from inner error")
@@ -137,7 +135,7 @@ func TestWrap(t *testing.T) {
 	})
 
 	t.Run("wrap nil error", func(t *testing.T) {
-		wrapped := errors.Wrap(nil, errors.ErrCodeInternal, "should be nil")
+		wrapped := Wrap(nil, ErrCodeInternal, "should be nil")
 		if wrapped != nil {
 			t.Error("Expected nil when wrapping nil error")
 		}
@@ -147,22 +145,22 @@ func TestWrap(t *testing.T) {
 // TestUnwrap tests error unwrapping
 func TestUnwrap(t *testing.T) {
 	originalErr := fmt.Errorf("original error")
-	wrapped := errors.Wrap(originalErr, errors.ErrCodeInternal, "wrapped")
+	wrapped := Wrap(originalErr, ErrCodeInternal, "wrapped")
 
 	unwrapped := wrapped.Unwrap()
 	if unwrapped != originalErr {
 		t.Error("Expected Unwrap to return original error")
 	}
 
-	// Test with errors.Is from standard library
+	// Test with Is from standard library
 	if !stderrors.Is(wrapped, originalErr) {
-		t.Error("Expected errors.Is to find original error")
+		t.Error("Expected Is to find original error")
 	}
 }
 
 // TestWithContext tests adding context to errors
 func TestWithContext(t *testing.T) {
-	err := errors.New(errors.ErrCodeKeyNotFound, "key not found").
+	err := New(ErrCodeKeyNotFound, "key not found").
 		WithContext("key", "user:123").
 		WithContext("table", "users")
 
@@ -182,27 +180,27 @@ func TestWithContext(t *testing.T) {
 // TestWithRetryable tests marking errors as retryable
 func TestWithRetryable(t *testing.T) {
 	t.Run("retryable error", func(t *testing.T) {
-		err := errors.New(errors.ErrCodeTimeout, "timeout").
+		err := New(ErrCodeTimeout, "timeout").
 			WithRetryable(true)
 
 		if !err.IsRetryable() {
 			t.Error("Expected error to be retryable")
 		}
 
-		if !errors.IsRetryableError(err) {
+		if !IsRetryableError(err) {
 			t.Error("Expected IsRetryableError to return true")
 		}
 	})
 
 	t.Run("non-retryable error", func(t *testing.T) {
-		err := errors.New(errors.ErrCodeInvalidKey, "invalid key").
+		err := New(ErrCodeInvalidKey, "invalid key").
 			WithRetryable(false)
 
 		if err.IsRetryable() {
 			t.Error("Expected error to not be retryable")
 		}
 
-		if errors.IsRetryableError(err) {
+		if IsRetryableError(err) {
 			t.Error("Expected IsRetryableError to return false")
 		}
 	})
@@ -213,32 +211,32 @@ func TestIsCode(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
-		code     errors.ErrorCode
+		code     ErrorCode
 		expected bool
 	}{
 		{
 			name:     "matching code",
-			err:      errors.New(errors.ErrCodeKeyNotFound, "not found"),
-			code:     errors.ErrCodeKeyNotFound,
+			err:      New(ErrCodeKeyNotFound, "not found"),
+			code:     ErrCodeKeyNotFound,
 			expected: true,
 		},
 		{
 			name:     "non-matching code",
-			err:      errors.New(errors.ErrCodeKeyNotFound, "not found"),
-			code:     errors.ErrCodeInternal,
+			err:      New(ErrCodeKeyNotFound, "not found"),
+			code:     ErrCodeInternal,
 			expected: false,
 		},
 		{
 			name:     "standard error",
 			err:      fmt.Errorf("standard error"),
-			code:     errors.ErrCodeInternal,
+			code:     ErrCodeInternal,
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := errors.IsCode(tt.err, tt.code)
+			result := IsCode(tt.err, tt.code)
 			if result != tt.expected {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
@@ -255,12 +253,12 @@ func TestIsRetryableError(t *testing.T) {
 	}{
 		{
 			name:     "retryable DistKVError",
-			err:      errors.New(errors.ErrCodeTimeout, "timeout").WithRetryable(true),
+			err:      New(ErrCodeTimeout, "timeout").WithRetryable(true),
 			expected: true,
 		},
 		{
 			name:     "non-retryable DistKVError",
-			err:      errors.New(errors.ErrCodeInvalidKey, "invalid").WithRetryable(false),
+			err:      New(ErrCodeInvalidKey, "invalid").WithRetryable(false),
 			expected: false,
 		},
 		{
@@ -272,7 +270,7 @@ func TestIsRetryableError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := errors.IsRetryableError(tt.err)
+			result := IsRetryableError(tt.err)
 			if result != tt.expected {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
@@ -283,15 +281,15 @@ func TestIsRetryableError(t *testing.T) {
 // TestCommonErrorConstructors tests convenience error constructors
 func TestCommonErrorConstructors(t *testing.T) {
 	t.Run("NewStorageClosedError", func(t *testing.T) {
-		err := errors.NewStorageClosedError()
-		if err.Code != errors.ErrCodeStorageClosed {
+		err := NewStorageClosedError()
+		if err.Code != ErrCodeStorageClosed {
 			t.Error("Expected STORAGE_CLOSED code")
 		}
 	})
 
 	t.Run("NewKeyNotFoundError", func(t *testing.T) {
-		err := errors.NewKeyNotFoundError("user:123")
-		if err.Code != errors.ErrCodeKeyNotFound {
+		err := NewKeyNotFoundError("user:123")
+		if err.Code != ErrCodeKeyNotFound {
 			t.Error("Expected KEY_NOT_FOUND code")
 		}
 		if err.Context["key"] != "user:123" {
@@ -300,8 +298,8 @@ func TestCommonErrorConstructors(t *testing.T) {
 	})
 
 	t.Run("NewQuorumFailedError", func(t *testing.T) {
-		err := errors.NewQuorumFailedError(3, 2)
-		if err.Code != errors.ErrCodeQuorumFailed {
+		err := NewQuorumFailedError(3, 2)
+		if err.Code != ErrCodeQuorumFailed {
 			t.Error("Expected QUORUM_FAILED code")
 		}
 		if err.Context["needed"] != 3 {
@@ -317,8 +315,8 @@ func TestCommonErrorConstructors(t *testing.T) {
 
 	t.Run("NewConnectionError", func(t *testing.T) {
 		cause := fmt.Errorf("connection refused")
-		err := errors.NewConnectionError("localhost:8080", cause)
-		if err.Code != errors.ErrCodeConnectionFailed {
+		err := NewConnectionError("localhost:8080", cause)
+		if err.Code != ErrCodeConnectionFailed {
 			t.Error("Expected CONNECTION_FAILED code")
 		}
 		if err.Context["address"] != "localhost:8080" {
@@ -330,8 +328,8 @@ func TestCommonErrorConstructors(t *testing.T) {
 	})
 
 	t.Run("NewTimeoutError", func(t *testing.T) {
-		err := errors.NewTimeoutError("database query")
-		if err.Code != errors.ErrCodeTimeout {
+		err := NewTimeoutError("database query")
+		if err.Code != ErrCodeTimeout {
 			t.Error("Expected TIMEOUT code")
 		}
 		if err.Context["operation"] != "database query" {
@@ -343,8 +341,8 @@ func TestCommonErrorConstructors(t *testing.T) {
 	})
 
 	t.Run("NewInvalidConfigError", func(t *testing.T) {
-		err := errors.NewInvalidConfigError("invalid port number")
-		if err.Code != errors.ErrCodeInvalidConfig {
+		err := NewInvalidConfigError("invalid port number")
+		if err.Code != ErrCodeInvalidConfig {
 			t.Error("Expected INVALID_CONFIG code")
 		}
 		if !strings.Contains(err.Message, "invalid port number") {
@@ -355,7 +353,7 @@ func TestCommonErrorConstructors(t *testing.T) {
 
 // TestStackTrace tests that stack traces are captured
 func TestStackTrace(t *testing.T) {
-	err := errors.New(errors.ErrCodeInternal, "test error")
+	err := New(ErrCodeInternal, "test error")
 
 	if err.StackTrace == "" {
 		t.Error("Expected stack trace to be captured")
@@ -370,76 +368,81 @@ func TestStackTrace(t *testing.T) {
 // TestErrorChaining tests chaining multiple error wraps
 func TestErrorChaining(t *testing.T) {
 	baseErr := fmt.Errorf("base error")
-	level1 := errors.Wrap(baseErr, errors.ErrCodeInternal, "level 1")
-	level2 := errors.Wrap(level1, errors.ErrCodeConnectionFailed, "level 2")
-	level3 := errors.Wrap(level2, errors.ErrCodeQuorumFailed, "level 3")
+	level1 := Wrap(baseErr, ErrCodeInternal, "level 1")
+	level2 := Wrap(level1, ErrCodeConnectionFailed, "level 2")
+	level3 := Wrap(level2, ErrCodeQuorumFailed, "level 3")
 
 	// Check that we can unwrap through the chain
-	if level3.Code != errors.ErrCodeQuorumFailed {
+	if level3.Code != ErrCodeQuorumFailed {
 		t.Error("Expected top level code")
 	}
 
 	unwrapped1 := level3.Unwrap()
-	if dkvErr, ok := unwrapped1.(*errors.DistKVError); !ok || dkvErr.Code != errors.ErrCodeConnectionFailed {
+	if dkvErr, ok := unwrapped1.(*DistKVError); !ok || dkvErr.Code != ErrCodeConnectionFailed {
 		t.Error("Expected level 2 code after first unwrap")
 	}
 
-	unwrapped2 := unwrapped1.(*errors.DistKVError).Unwrap()
-	if dkvErr, ok := unwrapped2.(*errors.DistKVError); !ok || dkvErr.Code != errors.ErrCodeInternal {
+	unwrapped2 := unwrapped1.(*DistKVError).Unwrap()
+	if dkvErr, ok := unwrapped2.(*DistKVError); !ok || dkvErr.Code != ErrCodeInternal {
 		t.Error("Expected level 1 code after second unwrap")
 	}
 
-	unwrapped3 := unwrapped2.(*errors.DistKVError).Unwrap()
+	unwrapped3 := unwrapped2.(*DistKVError).Unwrap()
 	if unwrapped3 != baseErr {
 		t.Error("Expected base error after third unwrap")
 	}
 }
 
-// TestContextMutability tests that context modifications create new instances
+// TestContextMutability tests that context modifications mutate in place
 func TestContextMutability(t *testing.T) {
-	err1 := errors.New(errors.ErrCodeInternal, "test")
+	err1 := New(ErrCodeInternal, "test")
 	err2 := err1.WithContext("key1", "value1")
 	err3 := err2.WithContext("key2", "value2")
 
-	// Original error should have context added
-	if len(err1.Context) != 1 {
-		t.Errorf("Expected err1 to have 1 context field, got %d", len(err1.Context))
+	// WithContext mutates in place and returns the same pointer
+	if err1 != err2 || err2 != err3 {
+		t.Error("Expected all error variables to point to the same instance")
 	}
 
-	if len(err2.Context) != 1 {
-		t.Errorf("Expected err2 to have 1 context field, got %d", len(err2.Context))
+	// All should have both context fields
+	if len(err1.Context) != 2 {
+		t.Errorf("Expected err1 to have 2 context fields, got %d", len(err1.Context))
 	}
 
 	if len(err3.Context) != 2 {
 		t.Errorf("Expected err3 to have 2 context fields, got %d", len(err3.Context))
 	}
+
+	if err3.Context["key1"] != "value1" || err3.Context["key2"] != "value2" {
+		t.Error("Expected both context fields to be set")
+	}
 }
 
 // TestAllErrorCodes tests that all error codes are defined
 func TestAllErrorCodes(t *testing.T) {
-	codes := []errors.ErrorCode{
-		errors.ErrCodeStorageClosed,
-		errors.ErrCodeKeyNotFound,
-		errors.ErrCodeInvalidKey,
-		errors.ErrCodeInvalidValue,
-		errors.ErrCodeStorageCorrupted,
-		errors.ErrCodeStorageFull,
-		errors.ErrCodeCompactionFailed,
-		errors.ErrCodeConnectionFailed,
-		errors.ErrCodeTimeout,
-		errors.ErrCodeNodeUnreachable,
-		errors.ErrCodeQuorumFailed,
-		errors.ErrCodeInsufficientNodes,
-		errors.ErrCodeReplicationFailed,
-		errors.ErrCodeConflict,
-		errors.ErrCodeVersionMismatch,
-		errors.ErrCodeInvalidConfig,
-		errors.ErrCodeInternal,
-		errors.ErrCodeUnknown,
+	codes := []ErrorCode{
+		ErrCodeStorageClosed,
+		ErrCodeKeyNotFound,
+		ErrCodeInvalidKey,
+		ErrCodeInvalidValue,
+		ErrCodeStorageCorrupted,
+		ErrCodeStorageFull,
+		ErrCodeCompactionFailed,
+		ErrCodeConnectionFailed,
+		ErrCodeTimeout,
+		ErrCodeNodeUnreachable,
+		ErrCodeQuorumFailed,
+		ErrCodeInsufficientNodes,
+		ErrCodeReplicationFailed,
+		ErrCodeConflict,
+		ErrCodeVersionMismatch,
+		ErrCodeInvalidConfig,
+		ErrCodeInternal,
+		ErrCodeUnknown,
 	}
 
 	for _, code := range codes {
-		err := errors.New(code, "test")
+		err := New(code, "test")
 		if err.Code != code {
 			t.Errorf("Error code mismatch for %s", code)
 		}

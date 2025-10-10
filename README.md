@@ -198,19 +198,21 @@ Commands:
 ## 🧪 Testing
 
 ### Unit Tests
-The project includes comprehensive unit tests organized in the `tests/unit/` directory:
+The project includes comprehensive unit tests following Go's standard convention (tests alongside code in `pkg/`):
 
 ```bash
 # Run all unit tests
 make test
 
 # Run specific component tests
-go test ./tests/unit/consensus/     # Vector clock tests
-go test ./tests/unit/storage/       # Storage engine tests
-go test ./tests/unit/errors/        # Error handling tests
-go test ./tests/unit/logging/       # Logging system tests
-go test ./tests/unit/metrics/       # Metrics collection tests
-go test ./tests/unit/partition/     # Consistent hashing tests
+go test ./pkg/consensus/...     # Vector clock tests
+go test ./pkg/storage/...       # Storage engine tests
+go test ./pkg/errors/...        # Error handling tests
+go test ./pkg/logging/...       # Logging system tests
+go test ./pkg/metrics/...       # Metrics collection tests
+go test ./pkg/partition/...     # Consistent hashing tests
+go test ./pkg/gossip/...        # Gossip protocol tests
+go test ./pkg/replication/...   # Replication tests
 ```
 
 **Test Coverage:**
@@ -223,6 +225,8 @@ go test ./tests/unit/partition/     # Consistent hashing tests
 - **Logging**: Log levels, filtering, structured fields, concurrent logging (15 tests)
 - **Metrics**: All metrics categories, snapshots, concurrent access, latency tracking (11 tests)
 - **Partition**: Consistent hashing, virtual nodes, distribution, consistency (22 tests)
+- **Gossip**: Failure detection, state synchronization, network operations (covered)
+- **Replication**: Quorum operations, replica coordination (covered)
 
 ### Integration Testing
 ```bash
@@ -418,15 +422,15 @@ type StorageConfig struct {
 ### Project Structure Optimization
 
 **Clean Architecture:**
-- **`pkg/` directory**: Contains only production code (no test files for cleaner structure)
-- **`tests/unit/` directory**: Organized unit tests with proper package structure using `package_test` pattern
-- **Separation of Concerns**: Clear distinction between production code and testing infrastructure
+- **`pkg/` directory**: Contains production code with tests alongside (following Go standard conventions)
+- **`tests/` directory**: Integration and chaos tests for multi-node scenarios
+- **Separation of Concerns**: Unit tests in `pkg/` (white-box testing), integration tests in `tests/` (black-box testing)
 - **Comprehensive Test Coverage**: 111+ unit tests covering all core packages with 100% of critical paths tested
 
 **Test Organization Benefits:**
-- **Code Readability**: Clean `pkg/` directory focused on core business logic
-- **Test Isolation**: Unified test management with clear hierarchical structure
-- **Go Best Practices**: Follows Go community standards with `package_test` naming
+- **Go Standard Convention**: Tests live alongside the code they test in `pkg/` directories
+- **Test Isolation**: Integration and chaos tests separated in `tests/` for multi-node scenarios
+- **Accessibility**: Internal tests can access unexported functions and types for thorough testing
 - **Quality Assurance**: Extensive test coverage ensures reliability and catches regressions early
 
 ## 🔧 Development
@@ -442,28 +446,38 @@ DistKV/
 │   │   └── replica_client.go  # Inter-node communication client
 │   └── client/                # Command-line client
 │       └── main.go            # Client CLI implementation
-├── pkg/                        # Core distributed systems packages
+├── pkg/                        # Core distributed systems packages (with tests)
 │   ├── consensus/             # Vector clocks for conflict resolution
-│   │   └── vector_clock.go    # Causality tracking implementation
+│   │   ├── vector_clock.go    # Causality tracking implementation
+│   │   └── vector_clock_test.go # Unit tests (17 tests)
 │   ├── errors/               # Comprehensive error handling
-│   │   └── errors.go         # Structured errors with codes and context
+│   │   ├── errors.go         # Structured errors with codes and context
+│   │   └── errors_test.go    # Unit tests (18 tests)
 │   ├── logging/              # Centralized structured logging
-│   │   └── logger.go         # Component-based logging with levels
+│   │   ├── logger.go         # Component-based logging with levels
+│   │   └── logger_test.go    # Unit tests (15 tests)
 │   ├── metrics/              # Production-ready metrics collection
-│   │   └── metrics.go        # Storage, replication, gossip, network metrics
+│   │   ├── metrics.go        # Storage, replication, gossip, network metrics
+│   │   └── metrics_test.go   # Unit tests (11 tests)
 │   ├── gossip/               # Network-based failure detection
 │   │   ├── gossip.go         # Gossip protocol implementation
+│   │   ├── gossip_test.go    # Unit tests
 │   │   ├── connection_pool.go # gRPC connection pooling with health monitoring
 │   │   └── node_info.go      # Node health and metadata
 │   ├── partition/            # Data distribution
-│   │   └── consistent_hash.go # Consistent hashing with virtual nodes
+│   │   ├── consistent_hash.go # Consistent hashing with virtual nodes
+│   │   └── consistent_hash_test.go # Unit tests (22 tests)
 │   ├── replication/          # Quorum-based data replication
-│   │   └── quorum.go         # N/R/W quorum consensus implementation
+│   │   ├── quorum.go         # N/R/W quorum consensus implementation
+│   │   └── quorum_test.go    # Unit tests
 │   └── storage/              # LSM-tree storage engine (production-ready)
 │       ├── engine.go         # Main storage engine with level-based compaction
+│       ├── engine_test.go    # Engine unit tests
 │       ├── memtable.go       # In-memory write buffer
+│       ├── memtable_test.go  # MemTable unit tests (14 tests)
 │       ├── sstable.go        # Sorted string table implementation
 │       ├── iterator.go       # Complete iterator interface (range queries)
+│       ├── iterator_test.go  # Iterator unit tests (8 tests)
 │       ├── bloom_filter.go   # Optimized Bloom filters with configurable FPR
 │       ├── memory_monitor.go # Memory management and pressure monitoring
 │       ├── types.go          # Storage data types and interfaces
@@ -480,16 +494,11 @@ DistKV/
 │   ├── test-cluster.bat      # Windows cluster testing
 │   ├── generate-proto.sh     # Protobuf code generation
 │   └── install-prerequisites.sh # Dependency installation
-├── tests/                      # Comprehensive test suites (organized structure)
-│   ├── unit/                 # Unit tests for individual components
-│   │   ├── consensus/       # Vector clock tests (17 tests)
-│   │   ├── storage/         # Storage engine tests (28+ tests)
-│   │   ├── errors/          # Error handling tests (18 tests)
-│   │   ├── logging/         # Logging system tests (15 tests)
-│   │   ├── metrics/         # Metrics collection tests (11 tests)
-│   │   └── partition/       # Consistent hashing tests (22 tests)
+├── tests/                      # Integration and chaos test suites
 │   ├── integration/          # Multi-node integration tests
+│   │   └── cluster_test.go   # End-to-end cluster behavior tests
 │   └── chaos/                # Fault injection and chaos testing
+│       └── partition_test.go # Network partition and recovery tests
 ├── deploy/                     # Production deployment configurations
 │   ├── docker/               # Docker deployment files
 │   └── k8s/                  # Kubernetes manifests and configs
