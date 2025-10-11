@@ -1,16 +1,45 @@
 # Kubernetes deployment configuration for DistKV cluster
 # This creates a production-ready DistKV deployment on Kubernetes
+#
+# Features:
+# - StatefulSet for stable network identities and persistent storage
+# - PersistentVolumeClaims for data persistence across pod restarts
+# - Headless service for cluster-internal communication
+# - ConfigMaps for centralized configuration management
+# - Resource limits and requests for resource management
+# - Readiness and liveness probes for health monitoring
+# - Pod disruption budgets for high availability
+# - Anti-affinity rules for spreading pods across nodes
 
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: distkv
+  labels:
+    name: distkv
+
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: distkv-config
   namespace: distkv
 data:
+  # Cluster configuration
   replicas: "3"
   read-quorum: "2"
   write-quorum: "2"
   virtual-nodes: "150"
+
+  # Storage configuration
+  memtable-max-size: "67108864"  # 64MB
+  compaction-threshold: "4"
+
+  # Gossip configuration
+  heartbeat-interval: "1s"
+  suspect-timeout: "5s"
+  dead-timeout: "10s"
 
 ---
 apiVersion: v1
@@ -20,16 +49,19 @@ metadata:
   namespace: distkv
   labels:
     app: distkv
+    component: cluster
 spec:
   selector:
     app: distkv
   ports:
-  - port: 8080
+  - name: grpc
+    port: 8080
     targetPort: 8080
     protocol: TCP
   type: ClusterIP
 
 ---
+# Headless service for stable DNS names in StatefulSet
 apiVersion: v1
 kind: Service
 metadata:
@@ -37,14 +69,17 @@ metadata:
   namespace: distkv
   labels:
     app: distkv
+    component: cluster
 spec:
   selector:
     app: distkv
   ports:
-  - port: 8080
+  - name: grpc
+    port: 8080
     targetPort: 8080
     protocol: TCP
   clusterIP: None
+  publishNotReadyAddresses: true  # Allow DNS for pods before they're ready
 
 ---
 apiVersion: apps/v1
@@ -52,9 +87,13 @@ kind: StatefulSet
 metadata:
   name: distkv
   namespace: distkv
+  labels:
+    app: distkv
+    component: cluster
 spec:
   serviceName: distkv-headless
   replicas: 3
+  podManagementPolicy: Parallel  # Start all pods simultaneously
   selector:
     matchLabels:
       app: distkv
@@ -62,70 +101,191 @@ spec:
     metadata:
       labels:
         app: distkv
+        component: cluster
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
     spec:
+      # Anti-affinity to spread pods across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - distkv
+              topologyKey: kubernetes.io/hostname
+
+      # Graceful shutdown
+      terminationGracePeriodSeconds: 60
+
       containers:
       - name: distkv
         image: distkv:latest
+        imagePullPolicy: IfNotPresent
         ports:
-        - containerPort: 8080
+        - name: grpc
+          containerPort: 8080
+          protocol: TCP
+
         env:
+        # Pod identity
         - name: NODE_ID
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+
+        # Server configuration
         - name: ADDRESS
           value: "0.0.0.0:8080"
         - name: DATA_DIR
           value: "/data"
+
+        # Cluster configuration from ConfigMap
+        - name: REPLICAS
+          valueFrom:
+            configMapKeyRef:
+              name: distkv-config
+              key: replicas
+        - name: READ_QUORUM
+          valueFrom:
+            configMapKeyRef:
+              name: distkv-config
+              key: read-quorum
+        - name: WRITE_QUORUM
+          valueFrom:
+            configMapKeyRef:
+              name: distkv-config
+              key: write-quorum
+        - name: VIRTUAL_NODES
+          valueFrom:
+            configMapKeyRef:
+              name: distkv-config
+              key: virtual-nodes
+
+        # Seed nodes for cluster formation
         - name: SEED_NODES
-          value: "distkv-0.distkv-headless.distkv.svc.cluster.local:8080"
+          value: "distkv-0.distkv-headless.distkv.svc.cluster.local:8080,distkv-1.distkv-headless.distkv.svc.cluster.local:8080,distkv-2.distkv-headless.distkv.svc.cluster.local:8080"
+
         command:
         - "./distkv-server"
+        args:
         - "-node-id=$(NODE_ID)"
         - "-address=$(ADDRESS)"
         - "-data-dir=$(DATA_DIR)"
         - "-seed-nodes=$(SEED_NODES)"
-        - "-replicas=3"
-        - "-read-quorum=2"
-        - "-write-quorum=2"
+        - "-replicas=$(REPLICAS)"
+        - "-read-quorum=$(READ_QUORUM)"
+        - "-write-quorum=$(WRITE_QUORUM)"
+        - "-virtual-nodes=$(VIRTUAL_NODES)"
+
         volumeMounts:
         - name: distkv-storage
           mountPath: /data
+
+        # Resource management
         resources:
           requests:
             memory: "512Mi"
             cpu: "250m"
+            ephemeral-storage: "1Gi"
           limits:
-            memory: "1Gi"
-            cpu: "500m"
+            memory: "2Gi"
+            cpu: "1000m"
+            ephemeral-storage: "2Gi"
+
+        # Liveness probe - checks if container is alive
         livenessProbe:
           exec:
             command:
-            - "./distkv-client"
-            - "-server=localhost:8080"
-            - "status"
+            - "/bin/sh"
+            - "-c"
+            - "./distkv-client -server=localhost:8080 -timeout=2s status || exit 1"
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+
+        # Readiness probe - checks if pod is ready to serve traffic
         readinessProbe:
           exec:
             command:
-            - "./distkv-client"  
-            - "-server=localhost:8080"
-            - "status"
+            - "/bin/sh"
+            - "-c"
+            - "./distkv-client -server=localhost:8080 -timeout=2s status || exit 1"
           initialDelaySeconds: 10
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+
+        # Startup probe - for slow-starting containers
+        startupProbe:
+          exec:
+            command:
+            - "/bin/sh"
+            - "-c"
+            - "./distkv-client -server=localhost:8080 -timeout=2s status || exit 1"
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 12  # 60 seconds total
+          successThreshold: 1
+
+        # Security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # Need writable /data
+          capabilities:
+            drop:
+            - ALL
+
+  # PersistentVolumeClaim templates for data persistence
   volumeClaimTemplates:
   - metadata:
       name: distkv-storage
+      labels:
+        app: distkv
     spec:
       accessModes:
       - ReadWriteOnce
       resources:
         requests:
           storage: 10Gi
-      storageClassName: fast-ssd
+      storageClassName: standard  # Change to 'fast-ssd' for production
 
 ---
+# Pod Disruption Budget for high availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: distkv-pdb
+  namespace: distkv
+spec:
+  minAvailable: 2  # Keep at least 2 pods running during disruptions
+  selector:
+    matchLabels:
+      app: distkv
+
+---
+# External LoadBalancer service (optional - for external access)
 apiVersion: v1
 kind: Service
 metadata:
@@ -133,11 +293,60 @@ metadata:
   namespace: distkv
   labels:
     app: distkv
+    component: external
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # For AWS
 spec:
   selector:
     app: distkv
   ports:
-  - port: 8080
+  - name: grpc
+    port: 8080
     targetPort: 8080
     protocol: TCP
   type: LoadBalancer
+  sessionAffinity: ClientIP  # Sticky sessions for better performance
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+
+---
+# Horizontal Pod Autoscaler (optional)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: distkv-hpa
+  namespace: distkv
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: distkv
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 minutes before scaling down
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 60
