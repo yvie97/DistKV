@@ -1,5 +1,14 @@
 # Docker Compose configuration for DistKV cluster
-# This sets up a 3-node DistKV cluster for development and testing
+#
+# QUICK START CONFIGURATION
+# This file provides a simple way to run DistKV with minimal setup.
+# Just run: docker-compose up
+#
+# For advanced configurations, see:
+# - deploy/docker/docker-compose.dev.yml  - Development with hot-reload, monitoring
+# - deploy/docker/docker-compose.prod.yml - Production-ready with load balancing
+#
+# This sets up a basic 3-node DistKV cluster for testing
 
 version: '3.8'
 

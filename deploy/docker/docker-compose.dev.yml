@@ -1,0 +1,245 @@
+# Docker Compose configuration for DistKV development environment
+# Optimized for local development with hot-reload, debugging, and minimal resource usage
+
+version: '3.8'
+
+services:
+  # Single development node with volume mounts for live code updates
+  distkv-dev:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage for development
+    container_name: distkv-dev
+    hostname: distkv-dev
+    ports:
+      - "8080:8080"     # Server port
+      - "2345:2345"     # Delve debugger port (optional)
+    environment:
+      - NODE_ID=dev-node
+      - ADDRESS=0.0.0.0:8080
+      - DATA_DIR=/data
+      - LOG_LEVEL=debug
+      - GO_ENV=development
+    volumes:
+      # Mount source code for live updates
+      - ../../:/app
+      # Separate volumes for build artifacts
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+      # Data persistence
+      - distkv-dev-data:/data
+    working_dir: /app
+    # Override entrypoint for development
+    command: >
+      sh -c "
+        echo 'Building server...' &&
+        go build -o distkv-server ./cmd/server &&
+        echo 'Starting server in development mode...' &&
+        ./distkv-server -node-id=dev-node -address=0.0.0.0:8080 -data-dir=/data -log-level=debug
+      "
+    networks:
+      - distkv-dev-network
+    stdin_open: true
+    tty: true
+
+  # Development node with hot-reload using air
+  distkv-dev-hot:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: builder
+    container_name: distkv-dev-hot
+    hostname: distkv-dev-hot
+    ports:
+      - "8081:8080"
+    environment:
+      - NODE_ID=dev-node-hot
+      - ADDRESS=0.0.0.0:8080
+      - DATA_DIR=/data
+      - LOG_LEVEL=debug
+    volumes:
+      - ../../:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+      - distkv-dev-hot-data:/data
+    working_dir: /app
+    command: >
+      sh -c "
+        go install github.com/cosmtrek/air@latest &&
+        air -c .air.toml
+      "
+    networks:
+      - distkv-dev-network
+    profiles:
+      - hot-reload
+    stdin_open: true
+    tty: true
+
+  # Test client for interactive testing
+  distkv-client:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: builder
+    container_name: distkv-client
+    hostname: distkv-client
+    environment:
+      - SERVER_ADDRESS=distkv-dev:8080
+    volumes:
+      - ../../:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    working_dir: /app
+    command: >
+      sh -c "
+        echo 'Building client...' &&
+        go build -o distkv-client ./cmd/client &&
+        echo 'Client ready. Use: docker-compose exec distkv-client ./distkv-client <command>' &&
+        tail -f /dev/null
+      "
+    depends_on:
+      - distkv-dev
+    networks:
+      - distkv-dev-network
+    profiles:
+      - with-client
+
+  # Redis for comparison/testing
+  redis:
+    image: redis:alpine
+    container_name: distkv-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - distkv-dev-network
+    profiles:
+      - with-redis
+
+  # Local Prometheus for metrics testing
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: distkv-dev-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-dev-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=1d'  # Short retention for dev
+      - '--web.enable-lifecycle'
+    networks:
+      - distkv-dev-network
+    profiles:
+      - with-monitoring
+
+  # Local Grafana for dashboard testing
+  grafana:
+    image: grafana/grafana:latest
+    container_name: distkv-dev-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - grafana-dev-data:/var/lib/grafana
+      - ../grafana:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - distkv-dev-network
+    profiles:
+      - with-monitoring
+
+  # Jaeger for distributed tracing (optional)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: distkv-jaeger
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    networks:
+      - distkv-dev-network
+    profiles:
+      - with-tracing
+
+  # Load testing with k6 (optional)
+  k6:
+    image: grafana/k6:latest
+    container_name: distkv-k6
+    volumes:
+      - ../../test/load:/scripts
+    environment:
+      - K6_OUT=influxdb=http://influxdb:8086/k6
+    command: run /scripts/load-test.js
+    depends_on:
+      - distkv-dev
+    networks:
+      - distkv-dev-network
+    profiles:
+      - load-test
+
+# Persistent volumes
+volumes:
+  distkv-dev-data:
+    driver: local
+  distkv-dev-hot-data:
+    driver: local
+  go-mod-cache:
+    driver: local
+  go-build-cache:
+    driver: local
+  prometheus-dev-data:
+    driver: local
+  grafana-dev-data:
+    driver: local
+
+# Network for development
+networks:
+  distkv-dev-network:
+    driver: bridge
+
+# Development usage examples:
+#
+# 1. Start basic development server:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml up
+#
+# 2. Start with hot-reload:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml --profile hot-reload up
+#
+# 3. Start with monitoring:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml --profile with-monitoring up
+#
+# 4. Start with everything:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml --profile hot-reload --profile with-monitoring up
+#
+# 5. Interactive client:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml exec distkv-dev sh
+#
+# 6. Run tests inside container:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml exec distkv-dev go test ./...
+#
+# 7. Build and test:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml exec distkv-dev make test
+#
+# 8. View logs:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml logs -f distkv-dev
+#
+# 9. Debug with delve:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml exec distkv-dev dlv debug ./cmd/server
+#
+# 10. Clean up:
+#    docker-compose -f deploy/docker/docker-compose.dev.yml down -v

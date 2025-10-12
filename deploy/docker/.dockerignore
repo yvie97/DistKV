@@ -1,0 +1,67 @@
+# Git files
+.git/
+.gitignore
+.github/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+distkv-server
+distkv-client
+
+# Test files
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Data directories
+data/
+*.db
+*.wal
+snapshots/
+
+# Documentation (not needed in container)
+docs/
+*.md
+!README.md
+
+# Deployment files (except what's needed)
+deploy/kubernetes/
+deploy/terraform/
+deploy/ansible/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker files (recursive)
+Dockerfile*
+docker-compose*.yml
+.dockerignore

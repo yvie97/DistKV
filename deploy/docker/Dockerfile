@@ -1,8 +1,4 @@
-# DistKV Dockerfile - QUICK START VERSION
-#
-# This is a simple Dockerfile for quick local builds.
-# For production-ready version with entrypoint scripts, see: deploy/docker/Dockerfile
-#
+# DistKV Dockerfile
 # Multi-stage build for optimal image size
 
 # Build stage
@@ -40,8 +36,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o distkv-client ./c
 # Runtime stage
 FROM alpine:latest
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata
+# Install runtime dependencies (including netcat for entrypoint script)
+RUN apk --no-cache add ca-certificates tzdata netcat-openbsd bash
 
 # Create non-root user
 RUN addgroup -g 1001 distkv && \
@@ -54,8 +50,12 @@ WORKDIR /app
 COPY --from=builder /app/distkv-server .
 COPY --from=builder /app/distkv-client .
 
-# Create data directory
-RUN mkdir -p /data && chown -R distkv:distkv /data /app
+# Copy entrypoint script
+COPY deploy/docker/docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Create data and hook directories
+RUN mkdir -p /data /docker-entrypoint.d && chown -R distkv:distkv /data /app /docker-entrypoint.d
 
 # Switch to non-root user
 USER distkv
@@ -70,8 +70,11 @@ ENV DATA_DIR=/data
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD ./distkv-client -server=localhost:8080 status || exit 1
 
-# Default command
-CMD ["./distkv-server", "-node-id=docker-node", "-address=0.0.0.0:8080", "-data-dir=/data"]
+# Set entrypoint
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+# Default command (can be overridden)
+CMD []
 
 # Labels for metadata
 LABEL maintainer="DistKV Team"
