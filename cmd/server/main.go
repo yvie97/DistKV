@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	cryptotls "crypto/tls"
 	"flag"
 	"fmt"
 	"net"
@@ -28,6 +29,7 @@ import (
 	"distkv/pkg/partition"
 	"distkv/pkg/replication"
 	"distkv/pkg/storage"
+	"distkv/pkg/tls"
 	"distkv/proto"
 )
 
@@ -37,19 +39,22 @@ type ServerConfig struct {
 	NodeID   string // Unique identifier for this node
 	Address  string // Address this server listens on (e.g., "localhost:8080")
 	DataDir  string // Directory to store data files
-	
+
 	// Cluster configuration
 	SeedNodes    []string // List of seed nodes to join the cluster
 	VirtualNodes int      // Number of virtual nodes for consistent hashing
-	
+
 	// Storage configuration
 	StorageConfig *storage.StorageConfig
-	
+
 	// Replication configuration
 	QuorumConfig *replication.QuorumConfig
-	
+
 	// Gossip configuration
 	GossipConfig *gossip.GossipConfig
+
+	// TLS configuration
+	TLSConfig *tls.Config
 }
 
 // DistKVServer implements the main server logic
@@ -155,21 +160,28 @@ func parseFlags() *ServerConfig {
 		readQuorum   = flag.Int("read-quorum", 2, "Read quorum size (R)")
 		writeQuorum  = flag.Int("write-quorum", 2, "Write quorum size (W)")
 		
-		// Gossip flags  
+		// Gossip flags
 		heartbeatInterval = flag.Duration("heartbeat-interval", 1*time.Second, "Heartbeat interval")
 		suspectTimeout    = flag.Duration("suspect-timeout", 30*time.Second, "Suspect timeout")
 		deadTimeout       = flag.Duration("dead-timeout", 120*time.Second, "Dead timeout")
 		gossipInterval    = flag.Duration("gossip-interval", 1*time.Second, "Gossip interval")
 		gossipFanout      = flag.Int("gossip-fanout", 3, "Gossip fanout")
+
+		// TLS flags
+		tlsEnabled    = flag.Bool("tls-enabled", false, "Enable TLS for secure communication")
+		tlsCertFile   = flag.String("tls-cert-file", "", "Path to TLS certificate file")
+		tlsKeyFile    = flag.String("tls-key-file", "", "Path to TLS private key file")
+		tlsCAFile     = flag.String("tls-ca-file", "", "Path to TLS CA certificate file for client verification")
+		tlsClientAuth = flag.String("tls-client-auth", "NoClientCert", "Client authentication policy: NoClientCert, RequestClientCert, RequireAnyClientCert, VerifyClientCertIfGiven, RequireAndVerifyClientCert")
 	)
 	
 	flag.Parse()
-	
+
 	// Generate node ID if not provided
 	if *nodeID == "" {
 		*nodeID = generateNodeID(*address)
 	}
-	
+
 	// Parse seed nodes
 	var seedNodesList []string
 	if *seedNodes != "" {
@@ -178,7 +190,24 @@ func parseFlags() *ServerConfig {
 			seedNodesList[i] = strings.TrimSpace(node)
 		}
 	}
-	
+
+	// Parse TLS client auth type
+	var clientAuthType cryptotls.ClientAuthType
+	switch *tlsClientAuth {
+	case "NoClientCert":
+		clientAuthType = cryptotls.NoClientCert
+	case "RequestClientCert":
+		clientAuthType = cryptotls.RequestClientCert
+	case "RequireAnyClientCert":
+		clientAuthType = cryptotls.RequireAnyClientCert
+	case "VerifyClientCertIfGiven":
+		clientAuthType = cryptotls.VerifyClientCertIfGiven
+	case "RequireAndVerifyClientCert":
+		clientAuthType = cryptotls.RequireAndVerifyClientCert
+	default:
+		clientAuthType = cryptotls.NoClientCert
+	}
+
 	return &ServerConfig{
 		NodeID:       *nodeID,
 		Address:      *address,
@@ -218,6 +247,14 @@ func parseFlags() *ServerConfig {
 			GossipFanout:        *gossipFanout,
 			MaxGossipPacketSize: 64 * 1024,
 		},
+
+		TLSConfig: &tls.Config{
+			Enabled:    *tlsEnabled,
+			CertFile:   *tlsCertFile,
+			KeyFile:    *tlsKeyFile,
+			CAFile:     *tlsCAFile,
+			ClientAuth: clientAuthType,
+		},
 	}
 }
 
@@ -226,20 +263,25 @@ func validateConfig(config *ServerConfig) error {
 	if config.NodeID == "" {
 		return fmt.Errorf("node-id is required")
 	}
-	
+
 	if config.Address == "" {
 		return fmt.Errorf("address is required")
 	}
-	
+
 	if config.DataDir == "" {
 		return fmt.Errorf("data-dir is required")
 	}
-	
+
 	// Validate quorum configuration
 	if err := config.QuorumConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid quorum config: %v", err)
 	}
-	
+
+	// Validate TLS configuration
+	if err := tls.ValidateConfig(config.TLSConfig); err != nil {
+		return fmt.Errorf("invalid TLS config: %v", err)
+	}
+
 	return nil
 }
 
@@ -273,7 +315,12 @@ func NewDistKVServer(config *ServerConfig) (*DistKVServer, error) {
 	// Create node selector and replica client
 	nodeSelector := NewNodeSelector(consistentHash, gossipManager)
 	replicaClient := NewReplicaClient()
-	
+
+	// Set TLS configuration on replica client if enabled
+	if config.TLSConfig.Enabled {
+		replicaClient.SetTLSConfig(config.TLSConfig)
+	}
+
 	// Initialize quorum manager with storage engine
 	quorumManager, err := replication.NewQuorumManager(config.QuorumConfig, nodeSelector, replicaClient, storageEngine)
 	if err != nil {
@@ -469,29 +516,49 @@ func (s *DistKVServer) contactSeedNode(seedAddress string) ([]string, error) {
 	// Create gRPC connection to seed node
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
-	conn, err := grpc.DialContext(ctx, seedAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	// Determine dial options based on TLS configuration
+	var dialOpts []grpc.DialOption
+	if s.config.TLSConfig.Enabled {
+		// Create client TLS config for inter-node communication
+		clientTLSConfig := &tls.Config{
+			Enabled:    true,
+			CAFile:     s.config.TLSConfig.CAFile,
+			CertFile:   s.config.TLSConfig.CertFile,
+			KeyFile:    s.config.TLSConfig.KeyFile,
+			ServerName: "localhost", // For self-signed certs
+		}
+		creds, err := tls.LoadClientCredentials(clientTLSConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS credentials: %v", err)
+		}
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
+	} else {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	conn, err := grpc.DialContext(ctx, seedAddress, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to seed node: %v", err)
 	}
 	defer conn.Close()
-	
+
 	// Get admin client
 	adminClient := proto.NewAdminServiceClient(conn)
-	
+
 	// Request cluster status
 	resp, err := adminClient.GetClusterStatus(ctx, &proto.ClusterStatusRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster status: %v", err)
 	}
-	
+
 	// Convert response to node list
 	var nodes []string
 	for _, node := range resp.Nodes {
 		nodeInfo := fmt.Sprintf("%s@%s", node.NodeId, node.Address)
 		nodes = append(nodes, nodeInfo)
 	}
-	
+
 	return nodes, nil
 }
 
@@ -500,23 +567,43 @@ func (s *DistKVServer) announceSelfToNode(targetAddress string) error {
 	// Create gRPC connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
-	conn, err := grpc.DialContext(ctx, targetAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	// Determine dial options based on TLS configuration
+	var dialOpts []grpc.DialOption
+	if s.config.TLSConfig.Enabled {
+		// Create client TLS config for inter-node communication
+		clientTLSConfig := &tls.Config{
+			Enabled:    true,
+			CAFile:     s.config.TLSConfig.CAFile,
+			CertFile:   s.config.TLSConfig.CertFile,
+			KeyFile:    s.config.TLSConfig.KeyFile,
+			ServerName: "localhost", // For self-signed certs
+		}
+		creds, err := tls.LoadClientCredentials(clientTLSConfig)
+		if err != nil {
+			return fmt.Errorf("failed to load TLS credentials: %v", err)
+		}
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
+	} else {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	conn, err := grpc.DialContext(ctx, targetAddress, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
 	}
 	defer conn.Close()
-	
+
 	// Get admin service client
 	adminClient := proto.NewAdminServiceClient(conn)
-	
+
 	// Announce ourselves using AddNode
 	req := &proto.AddNodeRequest{
 		NodeId:       s.config.NodeID,
 		NodeAddress:  s.config.Address,
 		VirtualNodes: int32(s.config.VirtualNodes),
 	}
-	
+
 	_, err = adminClient.AddNode(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to announce: %v", err)
@@ -530,37 +617,57 @@ func (s *DistKVServer) announceSelfToNode(targetAddress string) error {
 
 // startGRPCServer starts the gRPC server
 func (s *DistKVServer) startGRPCServer() error {
+	logger := logging.WithComponent("server.grpc")
+
 	// Create listener
 	listener, err := net.Listen("tcp", s.config.Address)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", s.config.Address, err)
 	}
-	
-	// Create gRPC server
-	s.grpcServer = grpc.NewServer()
-	
+
+	// Create gRPC server with TLS if enabled
+	var grpcServer *grpc.Server
+	if s.config.TLSConfig.Enabled {
+		// Load TLS credentials
+		creds, err := tls.LoadServerCredentials(s.config.TLSConfig)
+		if err != nil {
+			return fmt.Errorf("failed to load TLS credentials: %v", err)
+		}
+
+		grpcServer = grpc.NewServer(grpc.Creds(creds))
+		logger.WithFields(map[string]interface{}{
+			"address":  s.config.Address,
+			"certFile": s.config.TLSConfig.CertFile,
+		}).Info("gRPC server starting with TLS enabled")
+	} else {
+		grpcServer = grpc.NewServer()
+		logger.WithField("address", s.config.Address).
+			Warn("gRPC server starting WITHOUT TLS (insecure)")
+	}
+
+	s.grpcServer = grpcServer
+
 	// Register services
 	distkvService := &DistKVServiceImpl{server: s}
 	proto.RegisterDistKVServer(s.grpcServer, distkvService)
-	
+
 	nodeService := &NodeServiceImpl{server: s}
 	proto.RegisterNodeServiceServer(s.grpcServer, nodeService)
-	
+
 	adminService := &AdminServiceImpl{server: s}
 	proto.RegisterAdminServiceServer(s.grpcServer, adminService)
-	
+
 	// Enable reflection for debugging
 	reflection.Register(s.grpcServer)
-	
+
 	// Start server in background
 	go func() {
-		logger := logging.WithComponent("server.grpc")
-		logger.WithField("address", s.config.Address).Info("gRPC server listening")
+		logger.Info("gRPC server listening")
 		if err := s.grpcServer.Serve(listener); err != nil {
 			logger.WithError(err).Error("gRPC server error")
 		}
 	}()
-	
+
 	return nil
 }
 

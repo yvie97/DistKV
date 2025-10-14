@@ -15,6 +15,7 @@ import (
 
 	"distkv/pkg/consensus"
 	"distkv/pkg/replication"
+	"distkv/pkg/tls"
 	"distkv/proto"
 )
 
@@ -24,16 +25,19 @@ type ReplicaClient struct {
 	// connections is a pool of gRPC connections to other nodes
 	// Key: nodeID, Value: gRPC connection
 	connections map[string]*grpc.ClientConn
-	
+
 	// nodeAddresses maps node IDs to their network addresses
 	// Key: nodeID, Value: address (e.g., "192.168.1.10:8080")
 	nodeAddresses map[string]string
-	
+
 	// mutex protects concurrent access to the connection maps
 	mutex sync.RWMutex
-	
+
 	// connectionTimeout is how long to wait when establishing connections
 	connectionTimeout time.Duration
+
+	// tlsConfig holds TLS configuration for inter-node communication
+	tlsConfig *tls.Config
 }
 
 // NewReplicaClient creates a new ReplicaClient for inter-node communication
@@ -42,6 +46,22 @@ func NewReplicaClient() *ReplicaClient {
 		connections:       make(map[string]*grpc.ClientConn),
 		nodeAddresses:     make(map[string]string),
 		connectionTimeout: 5 * time.Second,
+		tlsConfig:         nil, // Will be set via SetTLSConfig if TLS is enabled
+	}
+}
+
+// SetTLSConfig sets the TLS configuration for inter-node communication
+func (rc *ReplicaClient) SetTLSConfig(config *tls.Config) {
+	rc.mutex.Lock()
+	defer rc.mutex.Unlock()
+	rc.tlsConfig = config
+
+	// Close all existing connections so they get recreated with TLS
+	for nodeID, conn := range rc.connections {
+		go func(nid string, c *grpc.ClientConn) {
+			c.Close()
+		}(nodeID, conn)
+		delete(rc.connections, nodeID)
 	}
 }
 
@@ -212,7 +232,7 @@ func (rc *ReplicaClient) getDistKVClient(nodeID string) (proto.DistKVClient, err
 func (rc *ReplicaClient) getConnection(nodeID string) (*grpc.ClientConn, error) {
 	rc.mutex.Lock()
 	defer rc.mutex.Unlock()
-	
+
 	// Check if we already have a connection
 	if conn, exists := rc.connections[nodeID]; exists {
 		// Verify the connection is still good
@@ -222,28 +242,39 @@ func (rc *ReplicaClient) getConnection(nodeID string) (*grpc.ClientConn, error) 
 		// Connection is shut down, remove it
 		delete(rc.connections, nodeID)
 	}
-	
+
 	// Get the address for this node
 	address, exists := rc.nodeAddresses[nodeID]
 	if !exists {
 		return nil, fmt.Errorf("no address known for node %s", nodeID)
 	}
-	
+
 	// Create new connection
 	ctx, cancel := context.WithTimeout(context.Background(), rc.connectionTimeout)
 	defer cancel()
-	
-	conn, err := grpc.DialContext(ctx, address,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(), // Wait for connection to be established
-	)
+
+	// Determine dial options based on TLS configuration
+	var dialOpts []grpc.DialOption
+	if rc.tlsConfig != nil && rc.tlsConfig.Enabled {
+		// Create client TLS config for inter-node communication
+		creds, err := tls.LoadClientCredentials(rc.tlsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS credentials: %v", err)
+		}
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
+	} else {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+	dialOpts = append(dialOpts, grpc.WithBlock()) // Wait for connection to be established
+
+	conn, err := grpc.DialContext(ctx, address, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to %s at %s: %v", nodeID, address, err)
 	}
-	
+
 	// Cache the connection
 	rc.connections[nodeID] = conn
-	
+
 	return conn, nil
 }
 

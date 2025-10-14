@@ -46,3 +46,10 @@ coverage.out
 # Environment files
 .env
 .env.local
+
+# TLS certificates and keys (never commit!)
+certs/
+*.pem
+*.key
+*.crt
+*.csr

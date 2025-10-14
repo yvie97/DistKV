@@ -11,6 +11,7 @@ DistKV is a highly available, scalable distributed key-value store inspired by A
 - **Gossip Protocol**: Complete network-based gossip implementation for cluster coordination and failure detection
 - **Consistent Hashing**: Virtual node-based partitioning with minimal data movement when scaling
 - **Vector Clocks**: Conflict detection and causality tracking for concurrent updates
+- **TLS Security**: Production-ready TLS 1.2+ encryption for all client-server and inter-node communication
 
 ## 📋 System Requirements
 
@@ -175,6 +176,13 @@ Options:
   -read-quorum int        Read quorum size R (default: 2)
   -write-quorum int       Write quorum size W (default: 2)
   -virtual-nodes int      Virtual nodes for consistent hashing (default: 150)
+
+TLS Options:
+  -tls-enabled            Enable TLS for secure communication (default: false)
+  -tls-cert-file string   Path to TLS certificate file
+  -tls-key-file string    Path to TLS private key file
+  -tls-ca-file string     Path to TLS CA certificate file
+  -tls-client-auth string Client auth policy (default: NoClientCert)
 ```
 
 ### Client Configuration
@@ -186,6 +194,14 @@ Options:
   -server string          Server address (default: localhost:8080)
   -timeout duration       Request timeout (default: 5s)
   -consistency string     Consistency level: one, quorum, all (default: quorum)
+
+TLS Options:
+  -tls-enabled                  Enable TLS (default: false)
+  -tls-ca-file string           Path to CA certificate
+  -tls-cert-file string         Path to client certificate (for mTLS)
+  -tls-key-file string          Path to client key (for mTLS)
+  -tls-server-name string       Expected server name (default: localhost)
+  -tls-insecure-skip-verify     Skip cert verification (testing only)
 
 Commands:
   put <key> <value>       Store a key-value pair
@@ -324,6 +340,35 @@ Compaction count: 15
 Memory usage: 1.2GB / 2.0GB (60%)
 Heap usage: 856MB
 ```
+
+## 🔒 TLS Security
+
+DistKV supports TLS 1.2+ encryption for production security:
+
+### Quick TLS Setup
+
+```bash
+# 1. Generate certificates (development only)
+./scripts/generate-certs.sh
+
+# 2. Start server with TLS
+./build/distkv-server \
+  -node-id=node1 \
+  -address=localhost:8080 \
+  -tls-enabled=true \
+  -tls-cert-file=./certs/server-cert.pem \
+  -tls-key-file=./certs/server-key.pem \
+  -tls-ca-file=./certs/ca-cert.pem
+
+# 3. Connect client with TLS
+./build/distkv-client \
+  -server=localhost:8080 \
+  -tls-enabled=true \
+  -tls-ca-file=./certs/ca-cert.pem \
+  put mykey "secure value"
+```
+
+**For detailed TLS configuration, see [docs/TLS_SETUP.md](docs/TLS_SETUP.md)**
 
 ## 🐳 Docker Support
 

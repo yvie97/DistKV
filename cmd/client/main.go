@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"distkv/pkg/tls"
 	"distkv/proto"
 )
 
@@ -28,12 +29,15 @@ import (
 type ClientConfig struct {
 	// ServerAddress is the address of any DistKV node to connect to
 	ServerAddress string
-	
+
 	// Timeout for gRPC operations
 	Timeout time.Duration
-	
+
 	// ConsistencyLevel for operations
 	ConsistencyLevel proto.ConsistencyLevel
+
+	// TLS configuration
+	TLSConfig *tls.Config
 }
 
 // DistKVClient wraps the gRPC client with additional functionality
@@ -111,12 +115,20 @@ func parseFlags() (*ClientConfig, []string) {
 		serverAddr   = flag.String("server", "localhost:8080", "DistKV server address")
 		timeout      = flag.Duration("timeout", 5*time.Second, "Request timeout")
 		consistency  = flag.String("consistency", "one", "Consistency level (one, quorum, all)")
+
+		// TLS flags
+		tlsEnabled         = flag.Bool("tls-enabled", false, "Enable TLS for secure communication")
+		tlsCAFile          = flag.String("tls-ca-file", "", "Path to TLS CA certificate file")
+		tlsCertFile        = flag.String("tls-cert-file", "", "Path to TLS client certificate file (for mutual TLS)")
+		tlsKeyFile         = flag.String("tls-key-file", "", "Path to TLS client private key file (for mutual TLS)")
+		tlsServerName      = flag.String("tls-server-name", "localhost", "Expected server name for TLS verification")
+		tlsInsecureSkipVerify = flag.Bool("tls-insecure-skip-verify", false, "Skip TLS certificate verification (insecure, for testing only)")
 	)
-	
+
 	// Parse flags and get remaining arguments
 	flag.Parse()
 	remainingArgs := flag.Args()
-	
+
 	// Convert consistency level
 	var consistencyLevel proto.ConsistencyLevel
 	switch strings.ToLower(*consistency) {
@@ -129,11 +141,19 @@ func parseFlags() (*ClientConfig, []string) {
 	default:
 		consistencyLevel = proto.ConsistencyLevel_ONE
 	}
-	
+
 	return &ClientConfig{
 		ServerAddress:    *serverAddr,
 		Timeout:          *timeout,
 		ConsistencyLevel: consistencyLevel,
+		TLSConfig: &tls.Config{
+			Enabled:            *tlsEnabled,
+			CAFile:             *tlsCAFile,
+			CertFile:           *tlsCertFile,
+			KeyFile:            *tlsKeyFile,
+			ServerName:         *tlsServerName,
+			InsecureSkipVerify: *tlsInsecureSkipVerify,
+		},
 	}, remainingArgs
 }
 
@@ -142,15 +162,27 @@ func NewDistKVClient(config *ClientConfig) (*DistKVClient, error) {
 	// Create gRPC connection
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 	defer cancel()
-	
-	conn, err := grpc.DialContext(ctx, config.ServerAddress,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+
+	// Determine dial options based on TLS configuration
+	var dialOpts []grpc.DialOption
+	if config.TLSConfig.Enabled {
+		creds, err := tls.LoadClientCredentials(config.TLSConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS credentials: %v", err)
+		}
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
+		log.Printf("Connecting to server %s with TLS enabled", config.ServerAddress)
+	} else {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		log.Printf("Connecting to server %s WITHOUT TLS (insecure)", config.ServerAddress)
+	}
+	dialOpts = append(dialOpts, grpc.WithBlock())
+
+	conn, err := grpc.DialContext(ctx, config.ServerAddress, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server %s: %v", config.ServerAddress, err)
 	}
-	
+
 	return &DistKVClient{
 		config:       config,
 		conn:         conn,
