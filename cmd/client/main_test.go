@@ -15,9 +15,9 @@ func TestParseFlags(t *testing.T) {
 	// which can only be called once per test run. Instead we test the logic.
 
 	tests := []struct {
-		name              string
-		consistencyInput  string
-		expectedLevel     proto.ConsistencyLevel
+		name             string
+		consistencyInput string
+		expectedLevel    proto.ConsistencyLevel
 	}{
 		{"one consistency", "one", proto.ConsistencyLevel_ONE},
 		{"quorum consistency", "quorum", proto.ConsistencyLevel_QUORUM},
@@ -335,12 +335,12 @@ func TestClientOperationsStructure(t *testing.T) {
 	}
 
 	// Verify methods exist (will panic if not)
-	_ = client.Put      // func(string, string) error
-	_ = client.Get      // func(string) error
-	_ = client.Delete   // func(string) error
-	_ = client.BatchPut // func([]string) error
+	_ = client.Put       // func(string, string) error
+	_ = client.Get       // func(string) error
+	_ = client.Delete    // func(string) error
+	_ = client.BatchPut  // func([]string) error
 	_ = client.GetStatus // func() error
-	_ = client.Close    // func() error
+	_ = client.Close     // func() error
 
 	// If we got here, all methods exist
 	t.Log("All expected client methods exist")

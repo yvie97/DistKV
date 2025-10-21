@@ -42,29 +42,29 @@ type StorageMetrics struct {
 	BloomFilterMisses atomic.Uint64
 
 	// Compaction metrics
-	CompactionCount     atomic.Uint64
-	CompactionErrors    atomic.Uint64
+	CompactionCount      atomic.Uint64
+	CompactionErrors     atomic.Uint64
 	CompactionDurationNs atomic.Uint64
-	TombstonesCollected atomic.Uint64
+	TombstonesCollected  atomic.Uint64
 
 	// Flush metrics
-	FlushCount     atomic.Uint64
-	FlushErrors    atomic.Uint64
+	FlushCount      atomic.Uint64
+	FlushErrors     atomic.Uint64
 	FlushDurationNs atomic.Uint64
 }
 
 // ReplicationMetrics tracks replication performance
 type ReplicationMetrics struct {
 	// Quorum write metrics
-	QuorumWriteOps     atomic.Uint64
-	QuorumWriteSuccess atomic.Uint64
-	QuorumWriteFailed  atomic.Uint64
+	QuorumWriteOps       atomic.Uint64
+	QuorumWriteSuccess   atomic.Uint64
+	QuorumWriteFailed    atomic.Uint64
 	QuorumWriteLatencyNs atomic.Uint64
 
 	// Quorum read metrics
-	QuorumReadOps     atomic.Uint64
-	QuorumReadSuccess atomic.Uint64
-	QuorumReadFailed  atomic.Uint64
+	QuorumReadOps       atomic.Uint64
+	QuorumReadSuccess   atomic.Uint64
+	QuorumReadFailed    atomic.Uint64
 	QuorumReadLatencyNs atomic.Uint64
 
 	// Replica metrics
@@ -97,15 +97,15 @@ type GossipMetrics struct {
 	MessagesDropped  atomic.Uint64
 
 	// State changes
-	NodeJoined   atomic.Uint64
-	NodeLeft     atomic.Uint64
-	NodeFailed   atomic.Uint64
+	NodeJoined    atomic.Uint64
+	NodeLeft      atomic.Uint64
+	NodeFailed    atomic.Uint64
 	NodeRecovered atomic.Uint64
 
 	// Heartbeats
-	HeartbeatsSent atomic.Uint64
+	HeartbeatsSent     atomic.Uint64
 	HeartbeatsReceived atomic.Uint64
-	HeartbeatsMissed atomic.Uint64
+	HeartbeatsMissed   atomic.Uint64
 }
 
 // NetworkMetrics tracks network performance
@@ -117,9 +117,9 @@ type NetworkMetrics struct {
 	ConnectionErrors  atomic.Uint64
 
 	// Data transfer
-	BytesSent     atomic.Uint64
-	BytesReceived atomic.Uint64
-	PacketsSent   atomic.Uint64
+	BytesSent       atomic.Uint64
+	BytesReceived   atomic.Uint64
+	PacketsSent     atomic.Uint64
 	PacketsReceived atomic.Uint64
 
 	// Request metrics
@@ -136,12 +136,12 @@ type NetworkMetrics struct {
 // SystemMetrics tracks system-level metrics
 type SystemMetrics struct {
 	// Health status
-	Healthy atomic.Bool
+	Healthy  atomic.Bool
 	ReadOnly atomic.Bool
 
 	// Resource usage (simplified - would integrate with OS metrics in production)
-	GoroutineCount atomic.Int64
-	MemoryUsageMB  atomic.Int64
+	GoroutineCount  atomic.Int64
+	MemoryUsageMB   atomic.Int64
 	CPUUsagePercent atomic.Int64
 
 	// Uptime
@@ -249,16 +249,16 @@ type StorageSnapshot struct {
 }
 
 type ReplicationSnapshot struct {
-	QuorumWriteOps       uint64
-	QuorumWriteSuccess   uint64
-	QuorumWriteSuccessRate float64
+	QuorumWriteOps          uint64
+	QuorumWriteSuccess      uint64
+	QuorumWriteSuccessRate  float64
 	AvgQuorumWriteLatencyMs float64
-	QuorumReadOps        uint64
-	QuorumReadSuccess    uint64
-	QuorumReadSuccessRate  float64
-	AvgQuorumReadLatencyMs float64
-	ConflictsDetected    uint64
-	ConflictsResolved    uint64
+	QuorumReadOps           uint64
+	QuorumReadSuccess       uint64
+	QuorumReadSuccessRate   float64
+	AvgQuorumReadLatencyMs  float64
+	ConflictsDetected       uint64
+	ConflictsResolved       uint64
 }
 
 type GossipSnapshot struct {

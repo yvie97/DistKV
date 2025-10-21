@@ -11,11 +11,11 @@ import (
 // Entry represents a key-value pair with metadata stored in the system.
 // This is the fundamental unit of data in our storage engine.
 type Entry struct {
-	Key        string                   // The key for this entry
-	Value      []byte                   // The actual data (can be nil for deletions)
-	VectorClock *consensus.VectorClock  // Version information for conflict resolution
-	Timestamp  int64                    // When this entry was created (Unix timestamp)
-	Deleted    bool                     // True if this is a deletion marker (tombstone)
+	Key         string                 // The key for this entry
+	Value       []byte                 // The actual data (can be nil for deletions)
+	VectorClock *consensus.VectorClock // Version information for conflict resolution
+	Timestamp   int64                  // When this entry was created (Unix timestamp)
+	Deleted     bool                   // True if this is a deletion marker (tombstone)
 }
 
 // NewEntry creates a new entry with current timestamp.
@@ -49,7 +49,7 @@ func (e *Entry) IsExpired(ttl time.Duration) bool {
 	if !e.Deleted {
 		return false // Only tombstones can expire
 	}
-	
+
 	expiryTime := time.Unix(0, e.Timestamp).Add(ttl)
 	return time.Now().After(expiryTime)
 }
@@ -69,14 +69,14 @@ const (
 // StorageConfig holds configuration parameters for the storage engine.
 type StorageConfig struct {
 	// MemTable settings
-	MemTableMaxSize    int           // Max size of MemTable before flush (bytes)
-	MaxMemTables       int           // Max number of MemTables to keep
+	MemTableMaxSize int // Max size of MemTable before flush (bytes)
+	MaxMemTables    int // Max number of MemTables to keep
 
 	// SSTable settings
-	SSTableMaxSize     int64         // Max size of individual SSTable files
-	BloomFilterBits    int           // Bits per key in Bloom filter
-	BloomFilterFPR     float64       // Target false positive rate for Bloom filter
-	CompressionEnabled bool          // Whether to compress SSTable blocks
+	SSTableMaxSize     int64   // Max size of individual SSTable files
+	BloomFilterBits    int     // Bits per key in Bloom filter
+	BloomFilterFPR     float64 // Target false positive rate for Bloom filter
+	CompressionEnabled bool    // Whether to compress SSTable blocks
 
 	// Compaction settings
 	CompactionStrategy  CompactionStrategy // Compaction strategy to use
@@ -86,27 +86,27 @@ type StorageConfig struct {
 	MaxLevels           int                // Maximum number of levels (for level-based)
 
 	// Garbage collection
-	TombstoneTTL       time.Duration // How long to keep deletion markers
-	GCInterval         time.Duration // How often to run garbage collection
+	TombstoneTTL time.Duration // How long to keep deletion markers
+	GCInterval   time.Duration // How often to run garbage collection
 
 	// Performance tuning
-	WriteBufferSize    int           // Size of write-ahead log buffer
-	CacheSize          int           // Size of block cache
-	MaxOpenFiles       int           // Max number of SSTable files to keep open
+	WriteBufferSize int // Size of write-ahead log buffer
+	CacheSize       int // Size of block cache
+	MaxOpenFiles    int // Max number of SSTable files to keep open
 }
 
 // DefaultStorageConfig returns reasonable default configuration values.
 func DefaultStorageConfig() *StorageConfig {
 	return &StorageConfig{
 		// MemTable: 64MB max, keep up to 2 in memory
-		MemTableMaxSize:     64 * 1024 * 1024, // 64MB
-		MaxMemTables:        2,
+		MemTableMaxSize: 64 * 1024 * 1024, // 64MB
+		MaxMemTables:    2,
 
 		// SSTable: 256MB files, 10 bits per Bloom filter key, 1% false positive rate
-		SSTableMaxSize:      256 * 1024 * 1024, // 256MB
-		BloomFilterBits:     10,
-		BloomFilterFPR:      0.01, // 1% false positive rate
-		CompressionEnabled:  true,
+		SSTableMaxSize:     256 * 1024 * 1024, // 256MB
+		BloomFilterBits:    10,
+		BloomFilterFPR:     0.01, // 1% false positive rate
+		CompressionEnabled: true,
 
 		// Compaction: level-based strategy, trigger at 4 files, max 1GB per operation
 		CompactionStrategy:  CompactionLevelBased,
@@ -116,27 +116,27 @@ func DefaultStorageConfig() *StorageConfig {
 		MaxLevels:           7,
 
 		// GC: keep tombstones for 3 hours, run GC every 1 hour
-		TombstoneTTL:        3 * time.Hour,
-		GCInterval:          1 * time.Hour,
+		TombstoneTTL: 3 * time.Hour,
+		GCInterval:   1 * time.Hour,
 
 		// Performance: 4MB write buffer, 128MB cache, 1000 open files
-		WriteBufferSize:     4 * 1024 * 1024,   // 4MB
-		CacheSize:          128 * 1024 * 1024,  // 128MB
-		MaxOpenFiles:       1000,
+		WriteBufferSize: 4 * 1024 * 1024,   // 4MB
+		CacheSize:       128 * 1024 * 1024, // 128MB
+		MaxOpenFiles:    1000,
 	}
 }
 
 // ReadResult represents the result of a read operation.
 type ReadResult struct {
-	Entry *Entry  // The entry if found, nil if not found
-	Found bool    // Whether the key was found
-	Error error   // Any error that occurred during read
+	Entry *Entry // The entry if found, nil if not found
+	Found bool   // Whether the key was found
+	Error error  // Any error that occurred during read
 }
 
 // WriteResult represents the result of a write operation.
 type WriteResult struct {
-	Success bool   // Whether the write was successful
-	Error   error  // Any error that occurred during write
+	Success bool  // Whether the write was successful
+	Error   error // Any error that occurred during write
 }
 
 // Iterator provides a way to scan through key-value pairs in order.
@@ -144,16 +144,16 @@ type WriteResult struct {
 type Iterator interface {
 	// Valid returns true if the iterator points to a valid entry
 	Valid() bool
-	
+
 	// Key returns the current key (only valid if Valid() is true)
 	Key() string
-	
-	// Value returns the current entry (only valid if Valid() is true) 
+
+	// Value returns the current entry (only valid if Valid() is true)
 	Value() *Entry
-	
+
 	// Next advances the iterator to the next entry
 	Next()
-	
+
 	// Close releases resources held by the iterator
 	Close() error
 }
@@ -162,28 +162,28 @@ type Iterator interface {
 // Used for monitoring and debugging.
 type StorageStats struct {
 	// MemTable stats
-	MemTableSize     int64 // Current size of active MemTable
-	MemTableCount    int   // Number of MemTables in memory
-	
+	MemTableSize  int64 // Current size of active MemTable
+	MemTableCount int   // Number of MemTables in memory
+
 	// SSTable stats
-	SSTableCount     int   // Number of SSTable files on disk
-	TotalDataSize    int64 // Total size of all data files
-	
+	SSTableCount  int   // Number of SSTable files on disk
+	TotalDataSize int64 // Total size of all data files
+
 	// Operation counters
-	ReadCount        int64 // Total number of read operations
-	WriteCount       int64 // Total number of write operations
-	CompactionCount  int64 // Number of compactions performed
-	
+	ReadCount       int64 // Total number of read operations
+	WriteCount      int64 // Total number of write operations
+	CompactionCount int64 // Number of compactions performed
+
 	// Performance metrics
-	AvgReadLatency   time.Duration // Average read latency
-	AvgWriteLatency  time.Duration // Average write latency
-	CacheHitRate     float64       // Block cache hit rate (0.0 to 1.0)
-	
+	AvgReadLatency  time.Duration // Average read latency
+	AvgWriteLatency time.Duration // Average write latency
+	CacheHitRate    float64       // Block cache hit rate (0.0 to 1.0)
+
 	// Error counters
-	ReadErrors       int64 // Number of failed read operations
-	WriteErrors      int64 // Number of failed write operations
+	ReadErrors  int64 // Number of failed read operations
+	WriteErrors int64 // Number of failed write operations
 
 	// Memory usage
-	MemoryUsage      int64 // Total tracked memory usage
-	HeapUsage        int64 // Heap memory usage
+	MemoryUsage int64 // Total tracked memory usage
+	HeapUsage   int64 // Heap memory usage
 }

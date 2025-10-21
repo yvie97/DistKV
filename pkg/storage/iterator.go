@@ -145,18 +145,18 @@ func (it *SSTableIterator) Close() error {
 // MergeIterator combines multiple iterators and returns entries in sorted order.
 // This is essential for reading data that spans multiple MemTables and SSTables.
 type MergeIterator struct {
-	iterators []Iterator           // All source iterators
-	heap      *iteratorHeap        // Min-heap for efficient merging
-	valid     bool                 // Whether the iterator has a current entry
-	current   *heapItem           // Current entry from the heap
+	iterators []Iterator    // All source iterators
+	heap      *iteratorHeap // Min-heap for efficient merging
+	valid     bool          // Whether the iterator has a current entry
+	current   *heapItem     // Current entry from the heap
 }
 
 // heapItem represents an entry from one of the source iterators.
 type heapItem struct {
-	key      string    // Key of the entry
-	entry    *Entry    // The actual entry
-	iterator Iterator  // Which iterator this entry came from
-	index    int       // Index of the source iterator
+	key      string   // Key of the entry
+	entry    *Entry   // The actual entry
+	iterator Iterator // Which iterator this entry came from
+	index    int      // Index of the source iterator
 }
 
 // iteratorHeap implements heap.Interface for merging sorted iterators.

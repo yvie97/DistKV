@@ -19,19 +19,19 @@ import (
 type QuorumConfig struct {
 	// N is the total number of replicas for each key
 	N int
-	
+
 	// R is the number of replicas that must respond for a read operation
 	R int
-	
-	// W is the number of replicas that must acknowledge a write operation  
+
+	// W is the number of replicas that must acknowledge a write operation
 	W int
-	
+
 	// RequestTimeout is the maximum time to wait for replica responses
 	RequestTimeout time.Duration
-	
+
 	// RetryAttempts is how many times to retry failed operations
 	RetryAttempts int
-	
+
 	// RetryDelay is the delay between retry attempts
 	RetryDelay time.Duration
 }
@@ -40,11 +40,11 @@ type QuorumConfig struct {
 // N=3, W=2, R=2 provides strong consistency when W + R > N
 func DefaultQuorumConfig() *QuorumConfig {
 	return &QuorumConfig{
-		N:              3,                // Store 3 copies of each key
-		R:              2,                // Read from 2 replicas (majority)
-		W:              2,                // Write to 2 replicas (majority)
-		RequestTimeout: 5 * time.Second,  // 5 second timeout for operations
-		RetryAttempts:  3,                // Retry failed operations 3 times
+		N:              3,               // Store 3 copies of each key
+		R:              2,               // Read from 2 replicas (majority)
+		W:              2,               // Write to 2 replicas (majority)
+		RequestTimeout: 5 * time.Second, // 5 second timeout for operations
+		RetryAttempts:  3,               // Retry failed operations 3 times
 		RetryDelay:     100 * time.Millisecond,
 	}
 }
@@ -54,15 +54,15 @@ func (qc *QuorumConfig) Validate() error {
 	if qc.N <= 0 {
 		return fmt.Errorf("N must be positive, got %d", qc.N)
 	}
-	
+
 	if qc.R <= 0 || qc.R > qc.N {
 		return fmt.Errorf("R must be between 1 and N, got R=%d, N=%d", qc.R, qc.N)
 	}
-	
+
 	if qc.W <= 0 || qc.W > qc.N {
 		return fmt.Errorf("W must be between 1 and N, got W=%d, N=%d", qc.W, qc.N)
 	}
-	
+
 	return nil
 }
 
@@ -82,18 +82,18 @@ type ReplicaInfo struct {
 
 // WriteRequest represents a request to write data to replicas.
 type WriteRequest struct {
-	Key         string                   // The key to write
-	Value       []byte                   // The value to store
-	VectorClock *consensus.VectorClock   // Version information
-	Context     context.Context          // Request context for timeouts
+	Key         string                 // The key to write
+	Value       []byte                 // The value to store
+	VectorClock *consensus.VectorClock // Version information
+	Context     context.Context        // Request context for timeouts
 }
 
 // WriteResponse represents the response from a write operation.
 type WriteResponse struct {
-	Success       bool                     // Whether the write succeeded
-	VectorClock   *consensus.VectorClock   // Updated vector clock
+	Success         bool                   // Whether the write succeeded
+	VectorClock     *consensus.VectorClock // Updated vector clock
 	ReplicasWritten int                    // Number of replicas that acknowledged
-	Errors        []error                  // Any errors that occurred
+	Errors          []error                // Any errors that occurred
 }
 
 // ReadRequest represents a request to read data from replicas.
@@ -104,20 +104,20 @@ type ReadRequest struct {
 
 // ReadResponse represents the response from a read operation.
 type ReadResponse struct {
-	Value       []byte                   // The value (nil if not found)
-	VectorClock *consensus.VectorClock   // Version information
-	Found       bool                     // Whether the key was found
-	ReplicasRead int                     // Number of replicas that responded
-	Errors      []error                  // Any errors that occurred
+	Value        []byte                 // The value (nil if not found)
+	VectorClock  *consensus.VectorClock // Version information
+	Found        bool                   // Whether the key was found
+	ReplicasRead int                    // Number of replicas that responded
+	Errors       []error                // Any errors that occurred
 }
 
 // ReplicaResponse represents a response from a single replica.
 type ReplicaResponse struct {
-	NodeID      string                   // Which node responded
-	Value       []byte                   // The value from this replica
-	VectorClock *consensus.VectorClock   // Vector clock from this replica
-	Success     bool                     // Whether the operation succeeded
-	Error       error                    // Any error that occurred
+	NodeID      string                 // Which node responded
+	Value       []byte                 // The value from this replica
+	VectorClock *consensus.VectorClock // Vector clock from this replica
+	Success     bool                   // Whether the operation succeeded
+	Error       error                  // Any error that occurred
 }
 
 // QuorumManager handles quorum-based operations across replicas.
@@ -136,7 +136,7 @@ type QuorumManager struct {
 type NodeSelector interface {
 	// GetReplicas returns N nodes that should store replicas of the key
 	GetReplicas(key string, count int) []ReplicaInfo
-	
+
 	// GetAliveReplicas returns only the alive nodes from GetReplicas
 	GetAliveReplicas(key string, count int) []ReplicaInfo
 }
@@ -145,9 +145,9 @@ type NodeSelector interface {
 // This will be implemented using gRPC calls.
 type ReplicaClient interface {
 	// WriteReplica writes a value to a specific replica node
-	WriteReplica(ctx context.Context, nodeID string, key string, value []byte, 
+	WriteReplica(ctx context.Context, nodeID string, key string, value []byte,
 		vectorClock *consensus.VectorClock) (*ReplicaResponse, error)
-	
+
 	// ReadReplica reads a value from a specific replica node
 	ReadReplica(ctx context.Context, nodeID string, key string) (*ReplicaResponse, error)
 }
@@ -213,19 +213,19 @@ func (qm *QuorumManager) Write(req *WriteRequest) (*WriteResponse, error) {
 		"replicaCount":  len(replicas),
 		"requiredCount": qm.config.W,
 	}).Debug("Found replicas for write operation")
-	
+
 	// Debug: Always try local-only for W=1 in testing
 	if qm.config.W == 1 {
 		// Single-node mode: write directly to local storage
 		return qm.writeLocalOnly(req)
 	}
-	
+
 	// For single-node testing with W=1, bypass replication if needed
 	if qm.config.W == 1 && len(replicas) == 0 {
 		// Single-node mode: write directly to local storage
 		return qm.writeLocalOnly(req)
 	}
-	
+
 	// For single-node testing, allow operation if we have at least 1 replica or W=1
 	minRequired := qm.config.W
 	if qm.config.W == 1 && len(replicas) == 0 {
@@ -233,15 +233,15 @@ func (qm *QuorumManager) Write(req *WriteRequest) (*WriteResponse, error) {
 		allReplicas := qm.nodeSelector.GetReplicas(req.Key, qm.config.N)
 		if len(allReplicas) > 0 {
 			minRequired = 1
-			replicas = allReplicas  // Use all replicas even if marked as not alive
+			replicas = allReplicas // Use all replicas even if marked as not alive
 		}
 	}
-	
+
 	if len(replicas) < minRequired {
-		return nil, fmt.Errorf("insufficient alive replicas: need %d, have %d", 
+		return nil, fmt.Errorf("insufficient alive replicas: need %d, have %d",
 			minRequired, len(replicas))
 	}
-	
+
 	// Create context with timeout
 	ctx := req.Context
 	if ctx == nil {
@@ -249,10 +249,10 @@ func (qm *QuorumManager) Write(req *WriteRequest) (*WriteResponse, error) {
 		ctx, cancel = context.WithTimeout(context.Background(), qm.config.RequestTimeout)
 		defer cancel()
 	}
-	
+
 	// Send write requests to all available replicas concurrently
 	responseChan := make(chan *ReplicaResponse, len(replicas))
-	
+
 	for _, replica := range replicas {
 		go func(r ReplicaInfo) {
 			response, err := qm.client.WriteReplica(ctx, r.NodeID, req.Key, req.Value, req.VectorClock)
@@ -267,20 +267,20 @@ func (qm *QuorumManager) Write(req *WriteRequest) (*WriteResponse, error) {
 			}
 		}(replica)
 	}
-	
+
 	// Collect responses until we have enough successful writes
 	var successfulWrites int
 	var errs []error
 	var latestVectorClock *consensus.VectorClock
-	
+
 	for i := 0; i < len(replicas) && successfulWrites < qm.config.W; i++ {
 		select {
 		case response := <-responseChan:
 			if response.Success {
 				successfulWrites++
 				// Keep track of the most recent vector clock
-				if latestVectorClock == nil || 
-				   (response.VectorClock != nil && response.VectorClock.IsAfter(latestVectorClock)) {
+				if latestVectorClock == nil ||
+					(response.VectorClock != nil && response.VectorClock.IsAfter(latestVectorClock)) {
 					latestVectorClock = response.VectorClock
 				}
 			} else {
@@ -294,7 +294,7 @@ func (qm *QuorumManager) Write(req *WriteRequest) (*WriteResponse, error) {
 			}, ctx.Err()
 		}
 	}
-	
+
 	// Return success if we got enough acknowledgments
 	if successfulWrites >= qm.config.W {
 		qm.metrics.Replication().QuorumWriteSuccess.Add(1)
@@ -348,24 +348,24 @@ func (qm *QuorumManager) Read(req *ReadRequest) (*ReadResponse, error) {
 		"replicaCount":  len(replicas),
 		"requiredCount": qm.config.R,
 	}).Debug("Found replicas for read operation")
-	
+
 	// Debug: Always try local-only for R=1 in testing
 	if qm.config.R == 1 {
 		// Single-node mode: read directly from local storage
 		return qm.readLocalOnly(req)
 	}
-	
+
 	// For single-node testing with R=1, bypass replication if needed
 	if qm.config.R == 1 && len(replicas) == 0 {
 		// Single-node mode: read directly from local storage
 		return qm.readLocalOnly(req)
 	}
-	
+
 	if len(replicas) < qm.config.R {
-		return nil, fmt.Errorf("insufficient alive replicas: need %d, have %d", 
+		return nil, fmt.Errorf("insufficient alive replicas: need %d, have %d",
 			qm.config.R, len(replicas))
 	}
-	
+
 	// Create context with timeout
 	ctx := req.Context
 	if ctx == nil {
@@ -373,10 +373,10 @@ func (qm *QuorumManager) Read(req *ReadRequest) (*ReadResponse, error) {
 		ctx, cancel = context.WithTimeout(context.Background(), qm.config.RequestTimeout)
 		defer cancel()
 	}
-	
+
 	// Send read requests to R replicas concurrently
 	responseChan := make(chan *ReplicaResponse, qm.config.R)
-	
+
 	for i := 0; i < qm.config.R && i < len(replicas); i++ {
 		go func(r ReplicaInfo) {
 			response, err := qm.client.ReadReplica(ctx, r.NodeID, req.Key)
@@ -391,11 +391,11 @@ func (qm *QuorumManager) Read(req *ReadRequest) (*ReadResponse, error) {
 			}
 		}(replicas[i])
 	}
-	
+
 	// Collect responses
 	var responses []*ReplicaResponse
 	var errs []error
-	
+
 	for i := 0; i < qm.config.R; i++ {
 		select {
 		case response := <-responseChan:
@@ -412,7 +412,7 @@ func (qm *QuorumManager) Read(req *ReadRequest) (*ReadResponse, error) {
 			}, ctx.Err()
 		}
 	}
-	
+
 	// Check if we got enough responses
 	if len(responses) < qm.config.R {
 		qm.metrics.Replication().QuorumReadFailed.Add(1)
@@ -449,16 +449,16 @@ func (qm *QuorumManager) resolveReadConflicts(responses []*ReplicaResponse, erro
 			Errors:       errors,
 		}
 	}
-	
+
 	// Find the response with the most recent vector clock
 	var latestResponse *ReplicaResponse
-	
+
 	for _, response := range responses {
 		if latestResponse == nil {
 			latestResponse = response
 			continue
 		}
-		
+
 		// Compare vector clocks to find the most recent version
 		if response.VectorClock != nil && latestResponse.VectorClock != nil {
 			if response.VectorClock.IsAfter(latestResponse.VectorClock) {
@@ -475,7 +475,7 @@ func (qm *QuorumManager) resolveReadConflicts(responses []*ReplicaResponse, erro
 			latestResponse = response
 		}
 	}
-	
+
 	return &ReadResponse{
 		Value:        latestResponse.Value,
 		VectorClock:  latestResponse.VectorClock,
@@ -489,7 +489,7 @@ func (qm *QuorumManager) resolveReadConflicts(responses []*ReplicaResponse, erro
 func (qm *QuorumManager) GetConfig() *QuorumConfig {
 	qm.mutex.RLock()
 	defer qm.mutex.RUnlock()
-	
+
 	configCopy := *qm.config
 	return &configCopy
 }
@@ -506,7 +506,7 @@ func (qm *QuorumManager) writeLocalOnly(req *WriteRequest) (*WriteResponse, erro
 			Errors:          []error{fmt.Errorf("local storage write failed: %v", err)},
 		}, err
 	}
-	
+
 	return &WriteResponse{
 		Success:         true,
 		VectorClock:     req.VectorClock,
@@ -528,7 +528,7 @@ func (qm *QuorumManager) readLocalOnly(req *ReadRequest) (*ReadResponse, error) 
 			Errors:       []error{fmt.Errorf("local storage read failed: %v", err)},
 		}, err
 	}
-	
+
 	// Handle case where key is not found
 	if entry == nil {
 		return &ReadResponse{
@@ -539,7 +539,7 @@ func (qm *QuorumManager) readLocalOnly(req *ReadRequest) (*ReadResponse, error) 
 			Errors:       nil,
 		}, nil
 	}
-	
+
 	// Handle deleted entries (tombstones)
 	if entry.Deleted {
 		return &ReadResponse{
@@ -550,7 +550,7 @@ func (qm *QuorumManager) readLocalOnly(req *ReadRequest) (*ReadResponse, error) 
 			Errors:       nil,
 		}, nil
 	}
-	
+
 	return &ReadResponse{
 		Value:        entry.Value,
 		VectorClock:  entry.VectorClock,

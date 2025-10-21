@@ -356,27 +356,27 @@ func TestCompare(t *testing.T) {
 		expected CompareResult
 	}{
 		{
-			name: "Equal",
-			vc1:  NewVectorClockFromMap(map[string]uint64{"node1": 2, "node2": 3}),
-			vc2:  NewVectorClockFromMap(map[string]uint64{"node1": 2, "node2": 3}),
+			name:     "Equal",
+			vc1:      NewVectorClockFromMap(map[string]uint64{"node1": 2, "node2": 3}),
+			vc2:      NewVectorClockFromMap(map[string]uint64{"node1": 2, "node2": 3}),
 			expected: Equal,
 		},
 		{
-			name: "After",
-			vc1:  NewVectorClockFromMap(map[string]uint64{"node1": 3, "node2": 4}),
-			vc2:  NewVectorClockFromMap(map[string]uint64{"node1": 2, "node2": 3}),
+			name:     "After",
+			vc1:      NewVectorClockFromMap(map[string]uint64{"node1": 3, "node2": 4}),
+			vc2:      NewVectorClockFromMap(map[string]uint64{"node1": 2, "node2": 3}),
 			expected: After,
 		},
 		{
-			name: "Before",
-			vc1:  NewVectorClockFromMap(map[string]uint64{"node1": 1, "node2": 2}),
-			vc2:  NewVectorClockFromMap(map[string]uint64{"node1": 2, "node2": 3}),
+			name:     "Before",
+			vc1:      NewVectorClockFromMap(map[string]uint64{"node1": 1, "node2": 2}),
+			vc2:      NewVectorClockFromMap(map[string]uint64{"node1": 2, "node2": 3}),
 			expected: Before,
 		},
 		{
-			name: "Concurrent",
-			vc1:  NewVectorClockFromMap(map[string]uint64{"node1": 3, "node2": 1}),
-			vc2:  NewVectorClockFromMap(map[string]uint64{"node1": 1, "node2": 3}),
+			name:     "Concurrent",
+			vc1:      NewVectorClockFromMap(map[string]uint64{"node1": 3, "node2": 1}),
+			vc2:      NewVectorClockFromMap(map[string]uint64{"node1": 1, "node2": 3}),
 			expected: Concurrent,
 		},
 	}

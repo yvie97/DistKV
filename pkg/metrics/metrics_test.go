@@ -4,8 +4,6 @@ package metrics
 import (
 	"testing"
 	"time"
-
-	
 )
 
 // TestNewMetricsCollector tests creating a new metrics collector

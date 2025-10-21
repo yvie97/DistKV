@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
 	pb "distkv/proto"
+	"google.golang.org/grpc"
 )
 
 // Gossip manages the gossip protocol for failure detection in the cluster.
@@ -44,7 +44,7 @@ type Gossip struct {
 	started bool
 
 	// connectionPool manages reusable gRPC connections with health checking
-	connectionPool *ConnectionPool
+	connectionPool   *ConnectionPool
 	connectionsMutex sync.RWMutex
 
 	// logger is the component logger
@@ -174,11 +174,11 @@ func (g *Gossip) Stop() error {
 func (g *Gossip) AddNode(nodeID, address string) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	
+
 	if _, exists := g.nodes[nodeID]; !exists {
 		nodeInfo := NewNodeInfo(nodeID, address)
 		g.nodes[nodeID] = nodeInfo
-		
+
 		// Notify callbacks about new node
 		g.notifyNodeEvent(NodeEvent{
 			NodeID:    nodeID,
@@ -195,11 +195,11 @@ func (g *Gossip) AddNode(nodeID, address string) {
 func (g *Gossip) RemoveNode(nodeID string) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	
+
 	if nodeInfo, exists := g.nodes[nodeID]; exists {
 		oldStatus := nodeInfo.GetStatus()
 		delete(g.nodes, nodeID)
-		
+
 		// Notify callbacks about node removal
 		g.notifyNodeEvent(NodeEvent{
 			NodeID:    nodeID,
@@ -215,12 +215,12 @@ func (g *Gossip) RemoveNode(nodeID string) {
 func (g *Gossip) GetNodes() map[string]*NodeInfo {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
-	
+
 	nodes := make(map[string]*NodeInfo)
 	for nodeID, nodeInfo := range g.nodes {
 		nodes[nodeID] = nodeInfo.Copy()
 	}
-	
+
 	return nodes
 }
 
@@ -228,14 +228,14 @@ func (g *Gossip) GetNodes() map[string]*NodeInfo {
 func (g *Gossip) GetAliveNodes() []*NodeInfo {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
-	
+
 	aliveNodes := make([]*NodeInfo, 0)
 	for _, nodeInfo := range g.nodes {
 		if nodeInfo.GetStatus() == NodeAlive {
 			aliveNodes = append(aliveNodes, nodeInfo.Copy())
 		}
 	}
-	
+
 	return aliveNodes
 }
 
@@ -243,7 +243,7 @@ func (g *Gossip) GetAliveNodes() []*NodeInfo {
 func (g *Gossip) RegisterEventCallback(callback NodeEventCallback) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	
+
 	g.eventCallbacks = append(g.eventCallbacks, callback)
 }
 
@@ -252,21 +252,21 @@ func (g *Gossip) RegisterEventCallback(callback NodeEventCallback) {
 func (g *Gossip) ProcessGossipMessage(senderID string, nodeUpdates []*NodeInfo) []*NodeInfo {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	
+
 	responses := make([]*NodeInfo, 0)
-	
+
 	// Process each node update in the message
 	for _, update := range nodeUpdates {
 		nodeID := update.NodeID
-		
+
 		if existingNode, exists := g.nodes[nodeID]; exists {
 			// Node exists, merge information
 			oldStatus := existingNode.GetStatus()
-			
+
 			if existingNode.MergeFrom(update) {
 				// Information was updated, check for status change
 				newStatus := existingNode.GetStatus()
-				
+
 				if oldStatus != newStatus {
 					g.notifyNodeEvent(NodeEvent{
 						NodeID:    nodeID,
@@ -277,13 +277,13 @@ func (g *Gossip) ProcessGossipMessage(senderID string, nodeUpdates []*NodeInfo) 
 					})
 				}
 			}
-			
+
 			// Always include our version in response
 			responses = append(responses, existingNode.Copy())
 		} else {
 			// New node, add it to our view
 			g.nodes[nodeID] = update.Copy()
-			
+
 			g.notifyNodeEvent(NodeEvent{
 				NodeID:    nodeID,
 				Address:   update.Address,
@@ -291,11 +291,11 @@ func (g *Gossip) ProcessGossipMessage(senderID string, nodeUpdates []*NodeInfo) 
 				NewStatus: update.Status,
 				Timestamp: time.Now(),
 			})
-			
+
 			responses = append(responses, update.Copy())
 		}
 	}
-	
+
 	// Also send back information about nodes the sender didn't mention
 	for nodeID, nodeInfo := range g.nodes {
 		found := false
@@ -305,12 +305,12 @@ func (g *Gossip) ProcessGossipMessage(senderID string, nodeUpdates []*NodeInfo) 
 				break
 			}
 		}
-		
+
 		if !found {
 			responses = append(responses, nodeInfo.Copy())
 		}
 	}
-	
+
 	return responses
 }
 
@@ -322,7 +322,7 @@ func (g *Gossip) startBackgroundWorkers() {
 		defer g.wg.Done()
 		ticker := time.NewTicker(g.config.HeartbeatInterval)
 		defer ticker.Stop()
-		
+
 		for {
 			select {
 			case <-ticker.C:
@@ -332,14 +332,14 @@ func (g *Gossip) startBackgroundWorkers() {
 			}
 		}
 	}()
-	
+
 	// Failure detection worker - checks for dead/suspect nodes
 	g.wg.Add(1)
 	go func() {
 		defer g.wg.Done()
 		ticker := time.NewTicker(g.config.SuspectTimeout / 2) // Check twice per timeout period
 		defer ticker.Stop()
-		
+
 		for {
 			select {
 			case <-ticker.C:
@@ -349,14 +349,14 @@ func (g *Gossip) startBackgroundWorkers() {
 			}
 		}
 	}()
-	
+
 	// Gossip worker - sends gossip messages to random nodes
 	g.wg.Add(1)
 	go func() {
 		defer g.wg.Done()
 		ticker := time.NewTicker(g.config.GossipInterval)
 		defer ticker.Stop()
-		
+
 		for {
 			select {
 			case <-ticker.C:
@@ -371,7 +371,7 @@ func (g *Gossip) startBackgroundWorkers() {
 // updateLocalHeartbeat increments the local node's heartbeat counter.
 func (g *Gossip) updateLocalHeartbeat() {
 	g.localNode.UpdateHeartbeat()
-	
+
 	// Update the local node in our cluster view
 	g.mutex.Lock()
 	if localNodeCopy, exists := g.nodes[g.localNode.NodeID]; exists {
@@ -386,18 +386,18 @@ func (g *Gossip) updateLocalHeartbeat() {
 func (g *Gossip) checkNodeHealth() {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	
+
 	for nodeID, nodeInfo := range g.nodes {
 		if nodeID == g.localNode.NodeID {
 			continue // Skip local node
 		}
-		
+
 		oldStatus := nodeInfo.GetStatus()
 		expectedStatus := nodeInfo.IsExpired(g.config.SuspectTimeout, g.config.DeadTimeout)
-		
+
 		if oldStatus != expectedStatus {
 			nodeInfo.SetStatus(expectedStatus)
-			
+
 			g.notifyNodeEvent(NodeEvent{
 				NodeID:    nodeID,
 				Address:   nodeInfo.Address,
@@ -415,7 +415,7 @@ func (g *Gossip) sendGossipMessages() {
 	if len(aliveNodes) <= 1 {
 		return // Only us or no one else alive
 	}
-	
+
 	// Filter out local node
 	targetNodes := make([]*NodeInfo, 0)
 	for _, node := range aliveNodes {
@@ -423,27 +423,27 @@ func (g *Gossip) sendGossipMessages() {
 			targetNodes = append(targetNodes, node)
 		}
 	}
-	
+
 	if len(targetNodes) == 0 {
 		return
 	}
-	
+
 	// Select random nodes to gossip with (fanout)
 	fanout := g.config.GossipFanout
 	if fanout > len(targetNodes) {
 		fanout = len(targetNodes)
 	}
-	
+
 	// Randomly select nodes to gossip with
 	rand.Shuffle(len(targetNodes), func(i, j int) {
 		targetNodes[i], targetNodes[j] = targetNodes[j], targetNodes[i]
 	})
-	
+
 	selectedNodes := targetNodes[:fanout]
-	
+
 	// Create gossip message with current node information
 	gossipMessage := g.createGossipMessage()
-	
+
 	// Send gossip messages concurrently
 	for _, targetNode := range selectedNodes {
 		go g.sendGossipToNode(targetNode, gossipMessage)
@@ -467,7 +467,7 @@ func (g *Gossip) GetLocalNode() *NodeInfo {
 func (g *Gossip) IsAlive() bool {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
-	
+
 	return g.started
 }
 
@@ -475,12 +475,12 @@ func (g *Gossip) IsAlive() bool {
 func (g *Gossip) createGossipMessage() *GossipMessageData {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
-	
+
 	nodeUpdates := make([]*NodeInfo, 0, len(g.nodes))
 	for _, nodeInfo := range g.nodes {
 		nodeUpdates = append(nodeUpdates, nodeInfo.Copy())
 	}
-	
+
 	return &GossipMessageData{
 		SenderID:    g.localNode.NodeID,
 		NodeUpdates: nodeUpdates,
@@ -535,12 +535,12 @@ func (g *Gossip) getConnection(address string) (*grpc.ClientConn, error) {
 func (g *Gossip) markNodeSuspect(nodeID string) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	
+
 	if nodeInfo, exists := g.nodes[nodeID]; exists {
 		oldStatus := nodeInfo.GetStatus()
 		if oldStatus != NodeSuspect && oldStatus != NodeDead {
 			nodeInfo.SetStatus(NodeSuspect)
-			
+
 			g.notifyNodeEvent(NodeEvent{
 				NodeID:    nodeID,
 				Address:   nodeInfo.Address,
@@ -561,7 +561,7 @@ type GossipMessageData struct {
 // convertToProtoMessage converts internal gossip message to protobuf format.
 func (g *Gossip) convertToProtoMessage(message *GossipMessageData) *pb.GossipMessage {
 	protoNodeUpdates := make([]*pb.NodeInfo, 0, len(message.NodeUpdates))
-	
+
 	for _, nodeInfo := range message.NodeUpdates {
 		protoNodeInfo := &pb.NodeInfo{
 			NodeId:           nodeInfo.NodeID,
@@ -572,7 +572,7 @@ func (g *Gossip) convertToProtoMessage(message *GossipMessageData) *pb.GossipMes
 		}
 		protoNodeUpdates = append(protoNodeUpdates, protoNodeInfo)
 	}
-	
+
 	return &pb.GossipMessage{
 		SenderId:    message.SenderID,
 		NodeUpdates: protoNodeUpdates,
@@ -597,7 +597,7 @@ func (g *Gossip) convertStatusToProto(status NodeStatus) pb.NodeStatus {
 func (g *Gossip) processGossipResponse(senderID string, response *pb.GossipResponse) {
 	// Convert protobuf response back to internal format
 	nodeUpdates := make([]*NodeInfo, 0, len(response.NodeUpdates))
-	
+
 	for _, protoNodeInfo := range response.NodeUpdates {
 		internalStatus := g.convertStatusFromProto(protoNodeInfo.Status)
 		nodeInfo := &NodeInfo{
@@ -610,7 +610,7 @@ func (g *Gossip) processGossipResponse(senderID string, response *pb.GossipRespo
 		}
 		nodeUpdates = append(nodeUpdates, nodeInfo)
 	}
-	
+
 	// Process the updates using existing logic
 	g.ProcessGossipMessage(senderID, nodeUpdates)
 }
@@ -621,7 +621,7 @@ func (g *Gossip) convertStatusFromProto(status pb.NodeStatus) NodeStatus {
 	case pb.NodeStatus_ALIVE:
 		return NodeAlive
 	case pb.NodeStatus_SUSPECT:
-		return NodeSuspect  
+		return NodeSuspect
 	case pb.NodeStatus_DEAD:
 		return NodeDead
 	default:

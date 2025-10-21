@@ -143,8 +143,8 @@ func (p *ConnectionPool) createConnection(address string) (*grpc.ClientConn, err
 	p.connections[address] = pooledConn
 
 	p.logger.WithFields(map[string]interface{}{
-		"address":    address,
-		"poolSize":   len(p.connections),
+		"address":  address,
+		"poolSize": len(p.connections),
 	}).Debug("Created new pooled connection")
 
 	return conn, nil

@@ -1,6 +1,6 @@
 // DistKV Server - Main entry point for the distributed key-value store server
 // This starts a DistKV node that can participate in the distributed cluster.
-// 
+//
 // The server provides both client-facing API and internal node communication.
 // It integrates all the components: storage engine, replication, gossip, etc.
 
@@ -36,9 +36,9 @@ import (
 // ServerConfig holds all configuration for the DistKV server
 type ServerConfig struct {
 	// Server identification
-	NodeID   string // Unique identifier for this node
-	Address  string // Address this server listens on (e.g., "localhost:8080")
-	DataDir  string // Directory to store data files
+	NodeID  string // Unique identifier for this node
+	Address string // Address this server listens on (e.g., "localhost:8080")
+	DataDir string // Directory to store data files
 
 	// Cluster configuration
 	SeedNodes    []string // List of seed nodes to join the cluster
@@ -61,22 +61,22 @@ type ServerConfig struct {
 type DistKVServer struct {
 	// Core configuration
 	config *ServerConfig
-	
+
 	// Storage layer
 	storageEngine *storage.Engine
-	
+
 	// Partitioning and replication
 	consistentHash *partition.ConsistentHash
 	quorumManager  *replication.QuorumManager
-	
+
 	// Failure detection
 	gossipManager *gossip.Gossip
-	
+
 	// gRPC server
 	grpcServer *grpc.Server
-	
+
 	// Node management
-	nodeSelector *NodeSelector
+	nodeSelector  *NodeSelector
 	replicaClient *ReplicaClient
 }
 
@@ -148,18 +148,18 @@ func parseFlags() *ServerConfig {
 		dataDir      = flag.String("data-dir", "./data", "Directory for data storage")
 		seedNodes    = flag.String("seed-nodes", "", "Comma-separated list of seed nodes")
 		virtualNodes = flag.Int("virtual-nodes", 150, "Number of virtual nodes for consistent hashing")
-		
+
 		// Storage flags
 		memTableSize     = flag.Int("mem-table-size", 1024, "MemTable size in bytes")
 		ssTableSize      = flag.Int64("sstable-size", 256*1024*1024, "SSTable size in bytes")
 		bloomFilterBits  = flag.Int("bloom-filter-bits", 10, "Bloom filter bits per key")
 		compactionThresh = flag.Int("compaction-threshold", 4, "Number of SSTables to trigger compaction")
-		
+
 		// Replication flags
-		replicas     = flag.Int("replicas", 3, "Number of replicas (N)")
-		readQuorum   = flag.Int("read-quorum", 2, "Read quorum size (R)")
-		writeQuorum  = flag.Int("write-quorum", 2, "Write quorum size (W)")
-		
+		replicas    = flag.Int("replicas", 3, "Number of replicas (N)")
+		readQuorum  = flag.Int("read-quorum", 2, "Read quorum size (R)")
+		writeQuorum = flag.Int("write-quorum", 2, "Write quorum size (W)")
+
 		// Gossip flags
 		heartbeatInterval = flag.Duration("heartbeat-interval", 1*time.Second, "Heartbeat interval")
 		suspectTimeout    = flag.Duration("suspect-timeout", 30*time.Second, "Suspect timeout")
@@ -174,7 +174,7 @@ func parseFlags() *ServerConfig {
 		tlsCAFile     = flag.String("tls-ca-file", "", "Path to TLS CA certificate file for client verification")
 		tlsClientAuth = flag.String("tls-client-auth", "NoClientCert", "Client authentication policy: NoClientCert, RequestClientCert, RequireAnyClientCert, VerifyClientCertIfGiven, RequireAndVerifyClientCert")
 	)
-	
+
 	flag.Parse()
 
 	// Generate node ID if not provided
@@ -214,7 +214,7 @@ func parseFlags() *ServerConfig {
 		DataDir:      *dataDir,
 		SeedNodes:    seedNodesList,
 		VirtualNodes: *virtualNodes,
-		
+
 		StorageConfig: &storage.StorageConfig{
 			MemTableMaxSize:     *memTableSize,
 			MaxMemTables:        2,
@@ -226,10 +226,10 @@ func parseFlags() *ServerConfig {
 			TombstoneTTL:        3 * time.Hour,
 			GCInterval:          1 * time.Hour,
 			WriteBufferSize:     4 * 1024 * 1024,
-			CacheSize:          128 * 1024 * 1024,
-			MaxOpenFiles:       1000,
+			CacheSize:           128 * 1024 * 1024,
+			MaxOpenFiles:        1000,
 		},
-		
+
 		QuorumConfig: &replication.QuorumConfig{
 			N:              *replicas,
 			R:              *readQuorum,
@@ -238,7 +238,7 @@ func parseFlags() *ServerConfig {
 			RetryAttempts:  3,
 			RetryDelay:     100 * time.Millisecond,
 		},
-		
+
 		GossipConfig: &gossip.GossipConfig{
 			HeartbeatInterval:   *heartbeatInterval,
 			SuspectTimeout:      *suspectTimeout,
@@ -298,20 +298,20 @@ func NewDistKVServer(config *ServerConfig) (*DistKVServer, error) {
 	if err := os.MkdirAll(config.DataDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %v", err)
 	}
-	
+
 	// Initialize storage engine
 	storageDir := filepath.Join(config.DataDir, "storage")
 	storageEngine, err := storage.NewEngine(storageDir, config.StorageConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage engine: %v", err)
 	}
-	
+
 	// Initialize consistent hashing
 	consistentHash := partition.NewConsistentHash(config.VirtualNodes)
-	
+
 	// Initialize gossip manager
 	gossipManager := gossip.NewGossip(config.NodeID, config.Address, config.GossipConfig)
-	
+
 	// Create node selector and replica client
 	nodeSelector := NewNodeSelector(consistentHash, gossipManager)
 	replicaClient := NewReplicaClient()
@@ -326,7 +326,7 @@ func NewDistKVServer(config *ServerConfig) (*DistKVServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create quorum manager: %v", err)
 	}
-	
+
 	return &DistKVServer{
 		config:         config,
 		storageEngine:  storageEngine,
@@ -455,7 +455,7 @@ func (s *DistKVServer) joinCluster() error {
 		s.replicaClient.UpdateNodeAddress(s.config.NodeID, s.config.Address)
 		return nil
 	}
-	
+
 	logger.WithField("seedNodes", s.config.SeedNodes).
 		Info("Attempting to join cluster via seed nodes")
 
@@ -470,7 +470,7 @@ func (s *DistKVServer) joinCluster() error {
 		}
 		discoveredNodes = append(discoveredNodes, nodes...)
 	}
-	
+
 	// Add discovered nodes to our systems
 	for _, nodeInfo := range discoveredNodes {
 		// Parse nodeInfo format: "nodeID@address"
@@ -479,13 +479,13 @@ func (s *DistKVServer) joinCluster() error {
 			continue
 		}
 		nodeID, address := parts[0], parts[1]
-		
+
 		// Add to gossip manager
 		s.gossipManager.AddNode(nodeID, address)
-		
+
 		// Add to consistent hash ring
 		s.consistentHash.AddNode(nodeID)
-		
+
 		// Update replica client with node address
 		s.replicaClient.UpdateNodeAddress(nodeID, address)
 
@@ -494,10 +494,10 @@ func (s *DistKVServer) joinCluster() error {
 			"address": address,
 		}).Debug("Discovered and added node")
 	}
-	
+
 	// Also add self to replica client for local operations
 	s.replicaClient.UpdateNodeAddress(s.config.NodeID, s.config.Address)
-	
+
 	// Announce ourselves to the cluster
 	for _, seedAddress := range s.config.SeedNodes {
 		if err := s.announceSelfToNode(seedAddress); err != nil {

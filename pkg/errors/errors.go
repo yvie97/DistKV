@@ -13,18 +13,18 @@ type ErrorCode string
 
 const (
 	// Storage errors
-	ErrCodeStorageClosed     ErrorCode = "STORAGE_CLOSED"
-	ErrCodeKeyNotFound       ErrorCode = "KEY_NOT_FOUND"
-	ErrCodeInvalidKey        ErrorCode = "INVALID_KEY"
-	ErrCodeInvalidValue      ErrorCode = "INVALID_VALUE"
-	ErrCodeStorageCorrupted  ErrorCode = "STORAGE_CORRUPTED"
-	ErrCodeStorageFull       ErrorCode = "STORAGE_FULL"
-	ErrCodeCompactionFailed  ErrorCode = "COMPACTION_FAILED"
+	ErrCodeStorageClosed    ErrorCode = "STORAGE_CLOSED"
+	ErrCodeKeyNotFound      ErrorCode = "KEY_NOT_FOUND"
+	ErrCodeInvalidKey       ErrorCode = "INVALID_KEY"
+	ErrCodeInvalidValue     ErrorCode = "INVALID_VALUE"
+	ErrCodeStorageCorrupted ErrorCode = "STORAGE_CORRUPTED"
+	ErrCodeStorageFull      ErrorCode = "STORAGE_FULL"
+	ErrCodeCompactionFailed ErrorCode = "COMPACTION_FAILED"
 
 	// Network errors
-	ErrCodeConnectionFailed  ErrorCode = "CONNECTION_FAILED"
-	ErrCodeTimeout           ErrorCode = "TIMEOUT"
-	ErrCodeNodeUnreachable   ErrorCode = "NODE_UNREACHABLE"
+	ErrCodeConnectionFailed ErrorCode = "CONNECTION_FAILED"
+	ErrCodeTimeout          ErrorCode = "TIMEOUT"
+	ErrCodeNodeUnreachable  ErrorCode = "NODE_UNREACHABLE"
 
 	// Replication errors
 	ErrCodeQuorumFailed      ErrorCode = "QUORUM_FAILED"
@@ -32,15 +32,15 @@ const (
 	ErrCodeReplicationFailed ErrorCode = "REPLICATION_FAILED"
 
 	// Consensus errors
-	ErrCodeConflict          ErrorCode = "CONFLICT"
-	ErrCodeVersionMismatch   ErrorCode = "VERSION_MISMATCH"
+	ErrCodeConflict        ErrorCode = "CONFLICT"
+	ErrCodeVersionMismatch ErrorCode = "VERSION_MISMATCH"
 
 	// Configuration errors
-	ErrCodeInvalidConfig     ErrorCode = "INVALID_CONFIG"
+	ErrCodeInvalidConfig ErrorCode = "INVALID_CONFIG"
 
 	// General errors
-	ErrCodeInternal          ErrorCode = "INTERNAL_ERROR"
-	ErrCodeUnknown           ErrorCode = "UNKNOWN_ERROR"
+	ErrCodeInternal ErrorCode = "INTERNAL_ERROR"
+	ErrCodeUnknown  ErrorCode = "UNKNOWN_ERROR"
 )
 
 // DistKVError represents a structured error with context

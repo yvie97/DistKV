@@ -13,13 +13,13 @@ import (
 type BloomFilter struct {
 	// bitArray stores the actual bits (true/false for each position)
 	bitArray []bool
-	
+
 	// size is the number of bits in the filter
 	size uint
-	
+
 	// hashFunctions is the number of hash functions to use
 	hashFunctions uint
-	
+
 	// bitsPerKey affects the false positive rate
 	bitsPerKey uint
 }
@@ -107,7 +107,7 @@ func (bf *BloomFilter) Add(key string) {
 	for i := uint(0); i < bf.hashFunctions; i++ {
 		// Generate hash value using the key and hash function index
 		hashValue := bf.hash(key, i)
-		
+
 		// Set the corresponding bit
 		bitIndex := hashValue % bf.size
 		bf.bitArray[bitIndex] = true
@@ -122,7 +122,7 @@ func (bf *BloomFilter) MightContain(key string) bool {
 	for i := uint(0); i < bf.hashFunctions; i++ {
 		// Generate same hash value as when adding
 		hashValue := bf.hash(key, i)
-		
+
 		// Check if the corresponding bit is set
 		bitIndex := hashValue % bf.size
 		if !bf.bitArray[bitIndex] {
@@ -130,7 +130,7 @@ func (bf *BloomFilter) MightContain(key string) bool {
 			return false
 		}
 	}
-	
+
 	// All bits were set, so key might exist (but could be false positive)
 	return true
 }
@@ -139,12 +139,12 @@ func (bf *BloomFilter) MightContain(key string) bool {
 // We use FNV hash with different seeds to simulate multiple hash functions.
 func (bf *BloomFilter) hash(key string, hashIndex uint) uint {
 	hasher := fnv.New32a()
-	
+
 	// Use hash function index as a seed to get different hash values
 	seedBytes := []byte{byte(hashIndex), byte(hashIndex >> 8), byte(hashIndex >> 16), byte(hashIndex >> 24)}
 	hasher.Write(seedBytes)
 	hasher.Write([]byte(key))
-	
+
 	return uint(hasher.Sum32())
 }
 
@@ -155,11 +155,11 @@ func (bf *BloomFilter) FalsePositiveRate(insertedKeys int) float64 {
 	if insertedKeys <= 0 {
 		return 0.0
 	}
-	
+
 	k := float64(bf.hashFunctions)
 	n := float64(insertedKeys)
 	m := float64(bf.size)
-	
+
 	// Calculate: (1 - e^(-k*n/m))^k
 	exponent := -k * n / m
 	base := 1.0 - math.Exp(exponent)
@@ -171,10 +171,10 @@ func (bf *BloomFilter) FalsePositiveRate(insertedKeys int) float64 {
 func (bf *BloomFilter) Serialize() []byte {
 	// Calculate number of bytes needed
 	byteCount := (bf.size + 7) / 8 // Round up to nearest byte
-	
+
 	// Create byte array
 	data := make([]byte, byteCount+8) // +8 for header info
-	
+
 	// Write header: size (4 bytes) + hash functions (4 bytes)
 	data[0] = byte(bf.size)
 	data[1] = byte(bf.size >> 8)
@@ -184,7 +184,7 @@ func (bf *BloomFilter) Serialize() []byte {
 	data[5] = byte(bf.hashFunctions >> 8)
 	data[6] = byte(bf.hashFunctions >> 16)
 	data[7] = byte(bf.hashFunctions >> 24)
-	
+
 	// Pack bits into bytes
 	for i := uint(0); i < bf.size; i++ {
 		if bf.bitArray[i] {
@@ -193,7 +193,7 @@ func (bf *BloomFilter) Serialize() []byte {
 			data[8+byteIndex] |= (1 << bitIndex)
 		}
 	}
-	
+
 	return data
 }
 
@@ -202,17 +202,17 @@ func DeserializeBloomFilter(data []byte) (*BloomFilter, error) {
 	if len(data) < 8 {
 		return nil, ErrSSTableCorrupted
 	}
-	
+
 	// Read header
 	size := uint(data[0]) | uint(data[1])<<8 | uint(data[2])<<16 | uint(data[3])<<24
 	hashFunctions := uint(data[4]) | uint(data[5])<<8 | uint(data[6])<<16 | uint(data[7])<<24
-	
+
 	// Calculate expected data size
 	expectedByteCount := (size + 7) / 8
 	if len(data) < int(8+expectedByteCount) {
 		return nil, ErrSSTableCorrupted
 	}
-	
+
 	// Create bloom filter
 	bf := &BloomFilter{
 		bitArray:      make([]bool, size),
@@ -220,7 +220,7 @@ func DeserializeBloomFilter(data []byte) (*BloomFilter, error) {
 		hashFunctions: hashFunctions,
 		bitsPerKey:    10, // Default, actual value doesn't matter for deserialized filters
 	}
-	
+
 	// Unpack bits from bytes
 	for i := uint(0); i < size; i++ {
 		byteIndex := i / 8
@@ -229,7 +229,7 @@ func DeserializeBloomFilter(data []byte) (*BloomFilter, error) {
 			bf.bitArray[i] = true
 		}
 	}
-	
+
 	return bf, nil
 }
 

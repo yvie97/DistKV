@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	
 )
 
 // TestLogLevelString tests log level string representations
@@ -83,10 +81,10 @@ func TestDefaultConfig(t *testing.T) {
 // TestLogLevelFiltering tests that log levels are filtered correctly
 func TestLogLevelFiltering(t *testing.T) {
 	tests := []struct {
-		name          string
-		configLevel   LogLevel
-		logLevel      LogLevel
-		shouldLog     bool
+		name        string
+		configLevel LogLevel
+		logLevel    LogLevel
+		shouldLog   bool
 	}{
 		{"DEBUG logs at DEBUG level", DEBUG, DEBUG, true},
 		{"INFO logs at DEBUG level", DEBUG, INFO, true},

@@ -31,7 +31,7 @@ func NewVectorClockFromMap(clocks map[string]uint64) *VectorClock {
 	for nodeID, clock := range clocks {
 		clocksCopy[nodeID] = clock
 	}
-	
+
 	return &VectorClock{
 		clocks: clocksCopy,
 	}
@@ -53,7 +53,7 @@ func (vc *VectorClock) Update(other *VectorClock) {
 			vc.clocks[nodeID] = otherClock
 		}
 	}
-	
+
 	// Also include any nodes that exist in our clock but not in other
 	// (no change needed as we already have higher or equal values)
 }
@@ -65,7 +65,7 @@ func (vc *VectorClock) Copy() *VectorClock {
 	for nodeID, clock := range vc.clocks {
 		clocksCopy[nodeID] = clock
 	}
-	
+
 	return &VectorClock{
 		clocks: clocksCopy,
 	}
@@ -77,21 +77,21 @@ func (vc *VectorClock) IsAfter(other *VectorClock) bool {
 	// Must be greater than or equal in all positions
 	// AND strictly greater in at least one position
 	hasStrictlyGreater := false
-	
+
 	// Check all nodes in the other clock
 	for nodeID, otherClock := range other.clocks {
 		ourClock := vc.clocks[nodeID]
-		
+
 		if ourClock < otherClock {
 			// We're behind in at least one node, so we're not after
 			return false
 		}
-		
+
 		if ourClock > otherClock {
 			hasStrictlyGreater = true
 		}
 	}
-	
+
 	// Check if we have nodes that the other doesn't (those count as strictly greater)
 	for nodeID := range vc.clocks {
 		if _, exists := other.clocks[nodeID]; !exists {
@@ -100,7 +100,7 @@ func (vc *VectorClock) IsAfter(other *VectorClock) bool {
 			}
 		}
 	}
-	
+
 	return hasStrictlyGreater
 }
 
@@ -128,25 +128,25 @@ func (vc *VectorClock) Equal(other *VectorClock) bool {
 		for nodeID := range other.clocks {
 			allNodes[nodeID] = true
 		}
-		
+
 		for nodeID := range allNodes {
-			ourClock := vc.clocks[nodeID]     // 0 if not present
+			ourClock := vc.clocks[nodeID]      // 0 if not present
 			otherClock := other.clocks[nodeID] // 0 if not present
-			
+
 			if ourClock != otherClock {
 				return false
 			}
 		}
 		return true
 	}
-	
+
 	// Same length, check each value
 	for nodeID, clock := range vc.clocks {
 		if other.clocks[nodeID] != clock {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -180,12 +180,12 @@ func (vc *VectorClock) String() string {
 	if len(vc.clocks) == 0 {
 		return "empty"
 	}
-	
+
 	parts := make([]string, 0, len(vc.clocks))
 	for nodeID, clock := range vc.clocks {
 		parts = append(parts, fmt.Sprintf("%s:%d", nodeID, clock))
 	}
-	
+
 	return strings.Join(parts, ",")
 }
 
@@ -214,14 +214,14 @@ func (vc *VectorClock) Compare(other *VectorClock) CompareResult {
 	if vc.Equal(other) {
 		return Equal
 	}
-	
+
 	if vc.IsAfter(other) {
 		return After
 	}
-	
+
 	if vc.IsBefore(other) {
 		return Before
 	}
-	
+
 	return Concurrent // Neither before nor after = concurrent
 }

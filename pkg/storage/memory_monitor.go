@@ -112,9 +112,9 @@ func NewMemoryMonitor(config *MemoryConfig) *MemoryMonitor {
 	monitor.startMonitoring()
 
 	logger.WithFields(map[string]interface{}{
-		"maxMemory":       config.MaxMemoryUsage,
-		"maxMemTable":     config.MaxMemTableMemory,
-		"maxCache":        config.MaxCacheMemory,
+		"maxMemory":         config.MaxMemoryUsage,
+		"maxMemTable":       config.MaxMemTableMemory,
+		"maxCache":          config.MaxCacheMemory,
 		"pressureThreshold": config.MemoryPressureThreshold,
 	}).Info("Memory monitor initialized")
 
@@ -273,11 +273,11 @@ func (m *MemoryMonitor) checkMemoryPressure(lastLevel *MemoryPressureLevel) {
 	if currentLevel != *lastLevel {
 		usage := m.GetMemoryUsage()
 		m.logger.WithFields(map[string]interface{}{
-			"level":          currentLevel,
-			"totalUsage":     usage.TotalUsage,
-			"memTableUsage":  usage.MemTableUsage,
-			"cacheUsage":     usage.CacheUsage,
-			"heapAlloc":      usage.HeapAlloc,
+			"level":         currentLevel,
+			"totalUsage":    usage.TotalUsage,
+			"memTableUsage": usage.MemTableUsage,
+			"cacheUsage":    usage.CacheUsage,
+			"heapAlloc":     usage.HeapAlloc,
 		}).Info("Memory pressure level changed")
 
 		// Notify callbacks
@@ -310,13 +310,13 @@ func (m *MemoryMonitor) Stop() {
 
 // MemoryUsageStats provides detailed memory usage information.
 type MemoryUsageStats struct {
-	TotalUsage    int64 // Total tracked usage
-	MemTableUsage int64 // Memory used by MemTables
-	CacheUsage    int64 // Memory used by caches
-	SystemAlloc   int64 // Bytes allocated by Go runtime
-	SystemTotal   int64 // Total bytes allocated over time
-	SystemSys     int64 // Bytes obtained from system
-	HeapAlloc     int64 // Bytes allocated on heap
-	HeapInuse     int64 // Bytes in use on heap
+	TotalUsage    int64  // Total tracked usage
+	MemTableUsage int64  // Memory used by MemTables
+	CacheUsage    int64  // Memory used by caches
+	SystemAlloc   int64  // Bytes allocated by Go runtime
+	SystemTotal   int64  // Total bytes allocated over time
+	SystemSys     int64  // Bytes obtained from system
+	HeapAlloc     int64  // Bytes allocated on heap
+	HeapInuse     int64  // Bytes in use on heap
 	NumGC         uint32 // Number of GC runs
 }

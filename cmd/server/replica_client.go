@@ -77,10 +77,10 @@ func (rc *ReplicaClient) WriteReplica(ctx context.Context, nodeID string, key st
 			Error:   fmt.Errorf("failed to connect to node %s: %v", nodeID, err),
 		}, err
 	}
-	
+
 	// Convert vector clock to proto format
 	protoVectorClock := convertVectorClockToProto(vectorClock)
-	
+
 	// Create replication request
 	req := &proto.ReplicateRequest{
 		Key:         key,
@@ -88,7 +88,7 @@ func (rc *ReplicaClient) WriteReplica(ctx context.Context, nodeID string, key st
 		VectorClock: protoVectorClock,
 		IsDelete:    value == nil, // nil value means deletion
 	}
-	
+
 	// Make the gRPC call with timeout
 	resp, err := client.Replicate(ctx, req)
 	if err != nil {
@@ -98,13 +98,13 @@ func (rc *ReplicaClient) WriteReplica(ctx context.Context, nodeID string, key st
 			Error:   fmt.Errorf("replication failed to node %s: %v", nodeID, err),
 		}, err
 	}
-	
+
 	// Convert response
 	var responseVectorClock *consensus.VectorClock
 	if resp.VectorClock != nil {
 		responseVectorClock = convertVectorClockFromProto(resp.VectorClock)
 	}
-	
+
 	return &replication.ReplicaResponse{
 		NodeID:      nodeID,
 		Value:       nil, // Write operations don't return values
@@ -118,7 +118,7 @@ func (rc *ReplicaClient) WriteReplica(ctx context.Context, nodeID string, key st
 // This is called during quorum read operations
 func (rc *ReplicaClient) ReadReplica(ctx context.Context, nodeID string, key string) (*replication.ReplicaResponse, error) {
 	log.Printf("ReplicaClient.ReadReplica: attempting to read key '%s' from node %s", key, nodeID)
-	
+
 	// Get NodeService client for the target node (for inter-node communication)
 	client, err := rc.getNodeServiceClient(nodeID)
 	if err != nil {
@@ -129,12 +129,12 @@ func (rc *ReplicaClient) ReadReplica(ctx context.Context, nodeID string, key str
 			Error:   fmt.Errorf("failed to connect to node %s: %v", nodeID, err),
 		}, err
 	}
-	
+
 	// Create local get request (bypasses quorum)
 	req := &proto.LocalGetRequest{
 		Key: key,
 	}
-	
+
 	// Make the gRPC call to LocalGet (avoids infinite recursion)
 	log.Printf("ReplicaClient.ReadReplica: making LocalGet gRPC call to node %s", nodeID)
 	resp, err := client.LocalGet(ctx, req)
@@ -147,18 +147,18 @@ func (rc *ReplicaClient) ReadReplica(ctx context.Context, nodeID string, key str
 			Error:   fmt.Errorf("read failed from node %s: %v", nodeID, err),
 		}, nil // Return nil error so quorum manager continues with other nodes
 	}
-	
+
 	// Convert response
 	var responseVectorClock *consensus.VectorClock
 	if resp.VectorClock != nil {
 		responseVectorClock = convertVectorClockFromProto(resp.VectorClock)
 	}
-	
+
 	var value []byte
 	if resp.Found {
 		value = resp.Value
 	}
-	
+
 	return &replication.ReplicaResponse{
 		NodeID:      nodeID,
 		Value:       value,
@@ -173,10 +173,10 @@ func (rc *ReplicaClient) ReadReplica(ctx context.Context, nodeID string, key str
 func (rc *ReplicaClient) UpdateNodeAddress(nodeID, address string) {
 	rc.mutex.Lock()
 	defer rc.mutex.Unlock()
-	
+
 	// Update the address mapping
 	rc.nodeAddresses[nodeID] = address
-	
+
 	// If we have an existing connection to this node and the address changed,
 	// close the old connection so it gets recreated with the new address
 	if conn, exists := rc.connections[nodeID]; exists {
@@ -192,7 +192,7 @@ func (rc *ReplicaClient) UpdateNodeAddress(nodeID, address string) {
 func (rc *ReplicaClient) Close() error {
 	rc.mutex.Lock()
 	defer rc.mutex.Unlock()
-	
+
 	// Close all connections
 	for nodeID, conn := range rc.connections {
 		if err := conn.Close(); err != nil {
@@ -200,11 +200,11 @@ func (rc *ReplicaClient) Close() error {
 			fmt.Printf("Error closing connection to node %s: %v\n", nodeID, err)
 		}
 	}
-	
+
 	// Clear the maps
 	rc.connections = make(map[string]*grpc.ClientConn)
 	rc.nodeAddresses = make(map[string]string)
-	
+
 	return nil
 }
 
@@ -214,7 +214,7 @@ func (rc *ReplicaClient) getNodeServiceClient(nodeID string) (proto.NodeServiceC
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return proto.NewNodeServiceClient(conn), nil
 }
 
@@ -224,7 +224,7 @@ func (rc *ReplicaClient) getDistKVClient(nodeID string) (proto.DistKVClient, err
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return proto.NewDistKVClient(conn), nil
 }
 

@@ -31,7 +31,7 @@ func (s *DistKVServiceImpl) Put(ctx context.Context, req *proto.PutRequest) (*pr
 		vectorClock = consensus.NewVectorClock()
 		vectorClock.Increment(s.server.config.NodeID)
 	}
-	
+
 	// Create write request for quorum manager
 	writeReq := &replication.WriteRequest{
 		Key:         req.Key,
@@ -39,7 +39,7 @@ func (s *DistKVServiceImpl) Put(ctx context.Context, req *proto.PutRequest) (*pr
 		VectorClock: vectorClock,
 		Context:     ctx,
 	}
-	
+
 	// Perform quorum write
 	writeResp, err := s.server.quorumManager.Write(writeReq)
 	if err != nil {
@@ -48,7 +48,7 @@ func (s *DistKVServiceImpl) Put(ctx context.Context, req *proto.PutRequest) (*pr
 			ErrorMessage: err.Error(),
 		}, nil
 	}
-	
+
 	return &proto.PutResponse{
 		Success:      writeResp.Success,
 		VectorClock:  convertVectorClockToProto(writeResp.VectorClock),
@@ -63,7 +63,7 @@ func (s *DistKVServiceImpl) Get(ctx context.Context, req *proto.GetRequest) (*pr
 		Key:     req.Key,
 		Context: ctx,
 	}
-	
+
 	// Perform quorum read
 	readResp, err := s.server.quorumManager.Read(readReq)
 	if err != nil {
@@ -72,7 +72,7 @@ func (s *DistKVServiceImpl) Get(ctx context.Context, req *proto.GetRequest) (*pr
 			ErrorMessage: err.Error(),
 		}, nil
 	}
-	
+
 	return &proto.GetResponse{
 		Value:        readResp.Value,
 		Found:        readResp.Found,
@@ -86,7 +86,7 @@ func (s *DistKVServiceImpl) Delete(ctx context.Context, req *proto.DeleteRequest
 	// Create vector clock for this delete operation
 	vectorClock := consensus.NewVectorClock()
 	vectorClock.Increment(s.server.config.NodeID)
-	
+
 	// Create write request with nil value (tombstone)
 	writeReq := &replication.WriteRequest{
 		Key:         req.Key,
@@ -94,7 +94,7 @@ func (s *DistKVServiceImpl) Delete(ctx context.Context, req *proto.DeleteRequest
 		VectorClock: vectorClock,
 		Context:     ctx,
 	}
-	
+
 	// Perform quorum write
 	writeResp, err := s.server.quorumManager.Write(writeReq)
 	if err != nil {
@@ -103,7 +103,7 @@ func (s *DistKVServiceImpl) Delete(ctx context.Context, req *proto.DeleteRequest
 			ErrorMessage: err.Error(),
 		}, nil
 	}
-	
+
 	return &proto.DeleteResponse{
 		Success:      writeResp.Success,
 		ErrorMessage: "",
@@ -114,14 +114,14 @@ func (s *DistKVServiceImpl) Delete(ctx context.Context, req *proto.DeleteRequest
 func (s *DistKVServiceImpl) BatchPut(ctx context.Context, req *proto.BatchPutRequest) (*proto.BatchPutResponse, error) {
 	// For simplicity, we'll perform each put sequentially
 	// A production implementation might optimize this with parallel writes
-	
+
 	var failedKeys []string
-	
+
 	for key, value := range req.Items {
 		// Create vector clock for this operation
 		vectorClock := consensus.NewVectorClock()
 		vectorClock.Increment(s.server.config.NodeID)
-		
+
 		// Create individual put request
 		putReq := &proto.PutRequest{
 			Key:              key,
@@ -129,20 +129,20 @@ func (s *DistKVServiceImpl) BatchPut(ctx context.Context, req *proto.BatchPutReq
 			ConsistencyLevel: req.ConsistencyLevel,
 			VectorClock:      convertVectorClockToProto(vectorClock),
 		}
-		
+
 		// Perform the put
 		putResp, err := s.Put(ctx, putReq)
 		if err != nil || !putResp.Success {
 			failedKeys = append(failedKeys, key)
 		}
 	}
-	
+
 	success := len(failedKeys) == 0
 	errorMessage := ""
 	if !success {
 		errorMessage = fmt.Sprintf("Failed to put %d out of %d keys", len(failedKeys), len(req.Items))
 	}
-	
+
 	return &proto.BatchPutResponse{
 		Success:      success,
 		ErrorMessage: errorMessage,
@@ -173,7 +173,7 @@ func (s *NodeServiceImpl) LocalGet(ctx context.Context, req *proto.LocalGetReque
 			ErrorMessage: err.Error(),
 		}, nil
 	}
-	
+
 	// Handle tombstone entries
 	if entry != nil && entry.Deleted {
 		return &proto.LocalGetResponse{
@@ -182,7 +182,7 @@ func (s *NodeServiceImpl) LocalGet(ctx context.Context, req *proto.LocalGetReque
 			ErrorMessage: "",
 		}, nil
 	}
-	
+
 	return &proto.LocalGetResponse{
 		Value:       entry.Value,
 		Found:       true,
@@ -194,7 +194,7 @@ func (s *NodeServiceImpl) LocalGet(ctx context.Context, req *proto.LocalGetReque
 func (s *NodeServiceImpl) Replicate(ctx context.Context, req *proto.ReplicateRequest) (*proto.ReplicateResponse, error) {
 	// Convert vector clock
 	vectorClock := convertVectorClockFromProto(req.VectorClock)
-	
+
 	// Perform local storage operation
 	var err error
 	if req.IsDelete {
@@ -202,17 +202,17 @@ func (s *NodeServiceImpl) Replicate(ctx context.Context, req *proto.ReplicateReq
 	} else {
 		err = s.server.storageEngine.Put(req.Key, req.Value, vectorClock)
 	}
-	
+
 	if err != nil {
 		return &proto.ReplicateResponse{
 			Success:      false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
-	
+
 	// Update vector clock for this node
 	vectorClock.Increment(s.server.config.NodeID)
-	
+
 	return &proto.ReplicateResponse{
 		Success:     true,
 		VectorClock: convertVectorClockToProto(vectorClock),
@@ -224,7 +224,7 @@ func (s *NodeServiceImpl) AntiEntropy(ctx context.Context, req *proto.AntiEntrop
 	// This is a placeholder for anti-entropy repair
 	// A full implementation would compare Merkle trees and return differing keys
 	log.Printf("AntiEntropy request received for range %s to %s", req.KeyRangeStart, req.KeyRangeEnd)
-	
+
 	return &proto.AntiEntropyResponse{
 		MissingKeys:    []*proto.KeyValue{},
 		ConflictedKeys: []*proto.KeyValue{},
@@ -238,16 +238,16 @@ func (s *NodeServiceImpl) Gossip(ctx context.Context, req *proto.GossipMessage) 
 	for i, protoNodeInfo := range req.NodeUpdates {
 		nodeUpdates[i] = convertNodeInfoFromProto(protoNodeInfo)
 	}
-	
+
 	// Process gossip message
 	responses := s.server.gossipManager.ProcessGossipMessage(req.SenderId, nodeUpdates)
-	
+
 	// Convert responses back to proto format
 	protoResponses := make([]*proto.NodeInfo, len(responses))
 	for i, nodeInfo := range responses {
 		protoResponses[i] = convertNodeInfoToProto(nodeInfo)
 	}
-	
+
 	return &proto.GossipResponse{
 		NodeUpdates: protoResponses,
 	}, nil
@@ -258,7 +258,7 @@ func (s *NodeServiceImpl) Handoff(ctx context.Context, req *proto.HandoffRequest
 	// This is a placeholder for hinted handoff
 	// A full implementation would apply the hinted writes to the local storage
 	log.Printf("Handoff request received with %d writes", len(req.Writes))
-	
+
 	return &proto.HandoffResponse{
 		Success: true,
 	}, nil
@@ -274,18 +274,18 @@ type AdminServiceImpl struct {
 func (s *AdminServiceImpl) AddNode(ctx context.Context, req *proto.AddNodeRequest) (*proto.AddNodeResponse, error) {
 	// Use the node ID provided by the joining node
 	nodeID := req.NodeId
-	
+
 	// Add to gossip manager
 	s.server.gossipManager.AddNode(nodeID, req.NodeAddress)
-	
+
 	// Add to consistent hash ring
 	s.server.consistentHash.AddNode(nodeID)
-	
+
 	// Update replica client with new node address
 	s.server.replicaClient.UpdateNodeAddress(nodeID, req.NodeAddress)
-	
+
 	log.Printf("Added node %s at %s to cluster", nodeID, req.NodeAddress)
-	
+
 	return &proto.AddNodeResponse{
 		Success: true,
 	}, nil
@@ -295,15 +295,15 @@ func (s *AdminServiceImpl) AddNode(ctx context.Context, req *proto.AddNodeReques
 func (s *AdminServiceImpl) RemoveNode(ctx context.Context, req *proto.RemoveNodeRequest) (*proto.RemoveNodeResponse, error) {
 	// Generate node ID from address
 	nodeID := fmt.Sprintf("node-%s", req.NodeAddress)
-	
+
 	// Remove from gossip manager
 	s.server.gossipManager.RemoveNode(nodeID)
-	
+
 	// Remove from consistent hash ring
 	s.server.consistentHash.RemoveNode(nodeID)
-	
+
 	log.Printf("Removed node %s at %s from cluster", nodeID, req.NodeAddress)
-	
+
 	return &proto.RemoveNodeResponse{
 		Success: true,
 	}, nil
@@ -314,9 +314,9 @@ func (s *AdminServiceImpl) Rebalance(ctx context.Context, req *proto.RebalanceRe
 	// This is a placeholder for rebalancing
 	// A full implementation would move data between nodes to balance the load
 	log.Printf("Rebalance requested (force=%v)", req.Force)
-	
+
 	return &proto.RebalanceResponse{
-		Success:  true,
+		Success:   true,
 		KeysMoved: 0,
 	}, nil
 }
@@ -325,11 +325,11 @@ func (s *AdminServiceImpl) Rebalance(ctx context.Context, req *proto.RebalanceRe
 func (s *AdminServiceImpl) GetClusterStatus(ctx context.Context, req *proto.ClusterStatusRequest) (*proto.ClusterStatusResponse, error) {
 	// Get all nodes from gossip manager
 	nodes := s.server.gossipManager.GetNodes()
-	
+
 	// Convert to proto format and count statuses
 	var protoNodes []*proto.NodeStatusInfo
 	var aliveCount, deadCount int
-	
+
 	for nodeID, nodeInfo := range nodes {
 		status := convertNodeStatusToProto(nodeInfo.GetStatus())
 		protoNode := &proto.NodeStatusInfo{
@@ -339,36 +339,36 @@ func (s *AdminServiceImpl) GetClusterStatus(ctx context.Context, req *proto.Clus
 			LastSeen: nodeInfo.GetLastSeen(),
 		}
 		protoNodes = append(protoNodes, protoNode)
-		
+
 		if nodeInfo.GetStatus() == gossip.NodeAlive {
 			aliveCount++
 		} else if nodeInfo.GetStatus() == gossip.NodeDead {
 			deadCount++
 		}
 	}
-	
+
 	totalNodes := len(nodes)
 	availabilityPercentage := 0.0
 	if totalNodes > 0 {
 		availabilityPercentage = float64(aliveCount) / float64(totalNodes) * 100.0
 	}
-	
+
 	// Get storage statistics
 	stats := s.server.storageEngine.Stats()
-	
+
 	return &proto.ClusterStatusResponse{
 		Nodes: protoNodes,
 		Health: &proto.ClusterHealth{
-			TotalNodes:            int32(totalNodes),
-			AliveNodes:            int32(aliveCount),
-			DeadNodes:             int32(deadCount),
+			TotalNodes:             int32(totalNodes),
+			AliveNodes:             int32(aliveCount),
+			DeadNodes:              int32(deadCount),
 			AvailabilityPercentage: availabilityPercentage,
 		},
 		Metrics: &proto.ClusterMetrics{
-			TotalKeys:    0, // Placeholder - would need to aggregate across nodes
+			TotalKeys:     0, // Placeholder - would need to aggregate across nodes
 			TotalRequests: stats.ReadCount + stats.WriteCount,
 			AvgLatencyMs:  float64(stats.AvgReadLatency.Milliseconds()),
-			Qps:          0, // Placeholder - would need to calculate QPS
+			Qps:           0, // Placeholder - would need to calculate QPS
 		},
 	}, nil
 }
@@ -379,7 +379,7 @@ func convertVectorClockFromProto(protoVC *proto.VectorClock) *consensus.VectorCl
 	if protoVC == nil {
 		return consensus.NewVectorClock()
 	}
-	
+
 	return consensus.NewVectorClockFromMap(protoVC.Clocks)
 }
 
@@ -387,7 +387,7 @@ func convertVectorClockToProto(vc *consensus.VectorClock) *proto.VectorClock {
 	if vc == nil {
 		return &proto.VectorClock{Clocks: make(map[string]uint64)}
 	}
-	
+
 	return &proto.VectorClock{
 		Clocks: vc.GetClocks(),
 	}

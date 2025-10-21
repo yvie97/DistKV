@@ -3,7 +3,7 @@
 //
 // Usage examples:
 //   client put mykey "my value"
-//   client get mykey  
+//   client get mykey
 //   client delete mykey
 //   client status
 
@@ -42,8 +42,8 @@ type ClientConfig struct {
 
 // DistKVClient wraps the gRPC client with additional functionality
 type DistKVClient struct {
-	config     *ClientConfig
-	conn       *grpc.ClientConn
+	config       *ClientConfig
+	conn         *grpc.ClientConn
 	distkvClient proto.DistKVClient
 	adminClient  proto.AdminServiceClient
 }
@@ -51,23 +51,23 @@ type DistKVClient struct {
 func main() {
 	// Parse command line flags
 	config, remainingArgs := parseFlags()
-	
+
 	// Create client
 	client, err := NewDistKVClient(config)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 	defer client.Close()
-	
+
 	// Parse command and execute
 	if len(remainingArgs) < 1 {
 		printUsage()
 		os.Exit(1)
 	}
-	
+
 	command := remainingArgs[0]
 	args := remainingArgs[1:]
-	
+
 	switch command {
 	case "put":
 		if len(args) < 2 {
@@ -103,7 +103,7 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
-	
+
 	if err != nil {
 		log.Fatalf("Command failed: %v", err)
 	}
@@ -112,16 +112,16 @@ func main() {
 // parseFlags parses command line arguments and returns config and remaining args
 func parseFlags() (*ClientConfig, []string) {
 	var (
-		serverAddr   = flag.String("server", "localhost:8080", "DistKV server address")
-		timeout      = flag.Duration("timeout", 5*time.Second, "Request timeout")
-		consistency  = flag.String("consistency", "one", "Consistency level (one, quorum, all)")
+		serverAddr  = flag.String("server", "localhost:8080", "DistKV server address")
+		timeout     = flag.Duration("timeout", 5*time.Second, "Request timeout")
+		consistency = flag.String("consistency", "one", "Consistency level (one, quorum, all)")
 
 		// TLS flags
-		tlsEnabled         = flag.Bool("tls-enabled", false, "Enable TLS for secure communication")
-		tlsCAFile          = flag.String("tls-ca-file", "", "Path to TLS CA certificate file")
-		tlsCertFile        = flag.String("tls-cert-file", "", "Path to TLS client certificate file (for mutual TLS)")
-		tlsKeyFile         = flag.String("tls-key-file", "", "Path to TLS client private key file (for mutual TLS)")
-		tlsServerName      = flag.String("tls-server-name", "localhost", "Expected server name for TLS verification")
+		tlsEnabled            = flag.Bool("tls-enabled", false, "Enable TLS for secure communication")
+		tlsCAFile             = flag.String("tls-ca-file", "", "Path to TLS CA certificate file")
+		tlsCertFile           = flag.String("tls-cert-file", "", "Path to TLS client certificate file (for mutual TLS)")
+		tlsKeyFile            = flag.String("tls-key-file", "", "Path to TLS client private key file (for mutual TLS)")
+		tlsServerName         = flag.String("tls-server-name", "localhost", "Expected server name for TLS verification")
 		tlsInsecureSkipVerify = flag.Bool("tls-insecure-skip-verify", false, "Skip TLS certificate verification (insecure, for testing only)")
 	)
 
@@ -195,22 +195,22 @@ func NewDistKVClient(config *ClientConfig) (*DistKVClient, error) {
 func (c *DistKVClient) Put(key, value string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.config.Timeout)
 	defer cancel()
-	
+
 	req := &proto.PutRequest{
 		Key:              key,
 		Value:            []byte(value),
 		ConsistencyLevel: c.config.ConsistencyLevel,
 	}
-	
+
 	resp, err := c.distkvClient.Put(ctx, req)
 	if err != nil {
 		return fmt.Errorf("put failed: %v", err)
 	}
-	
+
 	if !resp.Success {
 		return fmt.Errorf("put failed: %s", resp.ErrorMessage)
 	}
-	
+
 	fmt.Printf("Successfully stored key '%s'\n", key)
 	return nil
 }
@@ -219,27 +219,27 @@ func (c *DistKVClient) Put(key, value string) error {
 func (c *DistKVClient) Get(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.config.Timeout)
 	defer cancel()
-	
+
 	req := &proto.GetRequest{
 		Key:              key,
 		ConsistencyLevel: c.config.ConsistencyLevel,
 	}
-	
+
 	resp, err := c.distkvClient.Get(ctx, req)
 	if err != nil {
 		return fmt.Errorf("get failed: %v", err)
 	}
-	
+
 	if resp.ErrorMessage != "" {
 		return fmt.Errorf("get failed: %s", resp.ErrorMessage)
 	}
-	
+
 	if !resp.Found {
 		fmt.Printf("Key '%s' not found\n", key)
 	} else {
 		fmt.Printf("Key: %s\nValue: %s\n", key, string(resp.Value))
 	}
-	
+
 	return nil
 }
 
@@ -247,21 +247,21 @@ func (c *DistKVClient) Get(key string) error {
 func (c *DistKVClient) Delete(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.config.Timeout)
 	defer cancel()
-	
+
 	req := &proto.DeleteRequest{
 		Key:              key,
 		ConsistencyLevel: c.config.ConsistencyLevel,
 	}
-	
+
 	resp, err := c.distkvClient.Delete(ctx, req)
 	if err != nil {
 		return fmt.Errorf("delete failed: %v", err)
 	}
-	
+
 	if !resp.Success {
 		return fmt.Errorf("delete failed: %s", resp.ErrorMessage)
 	}
-	
+
 	fmt.Printf("Successfully deleted key '%s'\n", key)
 	return nil
 }
@@ -275,20 +275,20 @@ func (c *DistKVClient) BatchPut(args []string) error {
 		value := args[i+1]
 		items[key] = []byte(value)
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), c.config.Timeout)
 	defer cancel()
-	
+
 	req := &proto.BatchPutRequest{
 		Items:            items,
 		ConsistencyLevel: c.config.ConsistencyLevel,
 	}
-	
+
 	resp, err := c.distkvClient.BatchPut(ctx, req)
 	if err != nil {
 		return fmt.Errorf("batch put failed: %v", err)
 	}
-	
+
 	if !resp.Success {
 		fmt.Printf("Batch put partially failed: %s\n", resp.ErrorMessage)
 		if len(resp.FailedKeys) > 0 {
@@ -296,7 +296,7 @@ func (c *DistKVClient) BatchPut(args []string) error {
 		}
 		return nil // Don't return error for partial failure
 	}
-	
+
 	fmt.Printf("Successfully stored %d key-value pairs\n", len(items))
 	return nil
 }
@@ -305,21 +305,21 @@ func (c *DistKVClient) BatchPut(args []string) error {
 func (c *DistKVClient) GetStatus() error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.config.Timeout)
 	defer cancel()
-	
+
 	req := &proto.ClusterStatusRequest{}
-	
+
 	resp, err := c.adminClient.GetClusterStatus(ctx, req)
 	if err != nil {
 		return fmt.Errorf("get status failed: %v", err)
 	}
-	
+
 	fmt.Println("=== Cluster Status ===")
 	fmt.Printf("Health: %d total nodes, %d alive, %d dead (%.1f%% availability)\n",
 		resp.Health.TotalNodes,
 		resp.Health.AliveNodes,
 		resp.Health.DeadNodes,
 		resp.Health.AvailabilityPercentage)
-	
+
 	fmt.Println("\n=== Nodes ===")
 	for _, node := range resp.Nodes {
 		status := "UNKNOWN"
@@ -331,16 +331,16 @@ func (c *DistKVClient) GetStatus() error {
 		case proto.NodeStatus_DEAD:
 			status = "DEAD"
 		}
-		
+
 		lastSeen := time.Unix(node.LastSeen, 0)
 		fmt.Printf("  %s (%s) - %s - Last seen: %s\n",
 			node.NodeId, node.Address, status, lastSeen.Format(time.RFC3339))
 	}
-	
+
 	fmt.Println("\n=== Metrics ===")
 	fmt.Printf("Total requests: %d\n", resp.Metrics.TotalRequests)
 	fmt.Printf("Average latency: %.2f ms\n", resp.Metrics.AvgLatencyMs)
-	
+
 	return nil
 }
 

@@ -6,7 +6,7 @@ package main
 import (
 	"log"
 	"time"
-	
+
 	"distkv/pkg/gossip"
 	"distkv/pkg/partition"
 	"distkv/pkg/replication"
@@ -18,7 +18,7 @@ import (
 type NodeSelector struct {
 	// consistentHash provides the partitioning logic
 	consistentHash *partition.ConsistentHash
-	
+
 	// gossipManager provides information about node health
 	gossipManager *gossip.Gossip
 }
@@ -36,27 +36,27 @@ func NewNodeSelector(consistentHash *partition.ConsistentHash, gossipManager *go
 func (ns *NodeSelector) GetReplicas(key string, count int) []replication.ReplicaInfo {
 	// Get nodes from consistent hashing (this gives us the ideal placement)
 	nodeIDs := ns.consistentHash.GetNodes(key, count)
-	
+
 	// Debug logging
 	log.Printf("NodeSelector.GetReplicas for key '%s': consistent hash returned %d nodes: %v", key, len(nodeIDs), nodeIDs)
-	
+
 	// Convert to ReplicaInfo format
 	replicas := make([]replication.ReplicaInfo, 0, len(nodeIDs))
-	
+
 	// Get current node information from gossip manager
 	allNodes := ns.gossipManager.GetNodes()
 	log.Printf("NodeSelector.GetReplicas: gossip manager has %d total nodes", len(allNodes))
 	for nodeID, nodeInfo := range allNodes {
 		log.Printf("  Node %s: address=%s, status=%v", nodeID, nodeInfo.Address, nodeInfo.GetStatus())
 	}
-	
+
 	for _, nodeID := range nodeIDs {
 		if nodeInfo, exists := allNodes[nodeID]; exists {
 			// Node exists in gossip, get its current status
 			// HARD FIX: Always assume nodes are alive (connection-based failure detection)
 			// This bypasses broken gossip heartbeat mechanism
 			isAlive := true
-			
+
 			replica := replication.ReplicaInfo{
 				NodeID:   nodeID,
 				Address:  nodeInfo.Address,
@@ -76,7 +76,7 @@ func (ns *NodeSelector) GetReplicas(key string, count int) []replication.Replica
 			replicas = append(replicas, replica)
 		}
 	}
-	
+
 	return replicas
 }
 
@@ -85,16 +85,16 @@ func (ns *NodeSelector) GetReplicas(key string, count int) []replication.Replica
 func (ns *NodeSelector) GetAliveReplicas(key string, count int) []replication.ReplicaInfo {
 	// Get all potential replicas
 	allReplicas := ns.GetReplicas(key, count)
-	
+
 	// Filter to only alive replicas
 	aliveReplicas := make([]replication.ReplicaInfo, 0, len(allReplicas))
-	
+
 	for _, replica := range allReplicas {
 		if replica.IsAlive {
 			aliveReplicas = append(aliveReplicas, replica)
 		}
 	}
-	
+
 	return aliveReplicas
 }
 

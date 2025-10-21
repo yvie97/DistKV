@@ -21,9 +21,9 @@ import (
 
 // TestCluster represents a test DistKV cluster
 type TestCluster struct {
-	nodes    []*TestNode
-	dataDir  string
-	t        *testing.T
+	nodes   []*TestNode
+	dataDir string
+	t       *testing.T
 }
 
 // TestNode represents a single DistKV server instance for testing
@@ -39,13 +39,13 @@ type TestNode struct {
 // SetupCluster creates a test cluster with the specified number of nodes
 func SetupCluster(t *testing.T, nodeCount int) *TestCluster {
 	dataDir := fmt.Sprintf("/tmp/distkv-test-%d", time.Now().Unix())
-	
+
 	cluster := &TestCluster{
 		nodes:   make([]*TestNode, nodeCount),
 		dataDir: dataDir,
 		t:       t,
 	}
-	
+
 	// Create nodes
 	for i := 0; i < nodeCount; i++ {
 		port := 8080 + i
@@ -56,15 +56,15 @@ func SetupCluster(t *testing.T, nodeCount int) *TestCluster {
 		}
 		cluster.nodes[i] = node
 	}
-	
+
 	// Start first node (seed)
 	if err := cluster.startNode(0, ""); err != nil {
 		t.Fatalf("Failed to start seed node: %v", err)
 	}
-	
+
 	// Wait for seed node to be ready
 	time.Sleep(2 * time.Second)
-	
+
 	// Start remaining nodes
 	for i := 1; i < nodeCount; i++ {
 		seedNodes := cluster.nodes[0].address
@@ -73,10 +73,10 @@ func SetupCluster(t *testing.T, nodeCount int) *TestCluster {
 		}
 		time.Sleep(1 * time.Second) // Stagger startup
 	}
-	
+
 	// Wait for cluster to stabilize
 	time.Sleep(5 * time.Second)
-	
+
 	// Create gRPC clients for all nodes
 	for i, node := range cluster.nodes {
 		conn, err := grpc.Dial(node.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -86,7 +86,7 @@ func SetupCluster(t *testing.T, nodeCount int) *TestCluster {
 		node.conn = conn
 		node.client = proto.NewDistKVClient(conn)
 	}
-	
+
 	return cluster
 }
 
@@ -94,7 +94,7 @@ func SetupCluster(t *testing.T, nodeCount int) *TestCluster {
 func (tc *TestCluster) startNode(index int, seedNodes string) error {
 	node := tc.nodes[index]
 	nodeDataDir := fmt.Sprintf("%s/node%d", tc.dataDir, index+1)
-	
+
 	args := []string{
 		"-node-id=" + node.nodeID,
 		"-address=" + node.address,
@@ -103,19 +103,19 @@ func (tc *TestCluster) startNode(index int, seedNodes string) error {
 		"-read-quorum=2",
 		"-write-quorum=2",
 	}
-	
+
 	if seedNodes != "" {
 		args = append(args, "-seed-nodes="+seedNodes)
 	}
-	
+
 	cmd := exec.Command("../../build/distkv-server", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start node %s: %v", node.nodeID, err)
 	}
-	
+
 	node.cmd = cmd
 	return nil
 }
@@ -128,7 +128,7 @@ func (tc *TestCluster) TearDown() {
 			node.conn.Close()
 		}
 	}
-	
+
 	// Stop all server processes
 	for _, node := range tc.nodes {
 		if node.cmd != nil && node.cmd.Process != nil {
@@ -136,7 +136,7 @@ func (tc *TestCluster) TearDown() {
 			node.cmd.Wait()
 		}
 	}
-	
+
 	// Clean up test data
 	os.RemoveAll(tc.dataDir)
 }
@@ -145,73 +145,73 @@ func (tc *TestCluster) TearDown() {
 func TestBasicOperations(t *testing.T) {
 	cluster := SetupCluster(t, 3)
 	defer cluster.TearDown()
-	
+
 	client := cluster.nodes[0].client
 	ctx := context.Background()
-	
+
 	t.Run("Put operation", func(t *testing.T) {
 		req := &proto.PutRequest{
 			Key:              "test-key",
 			Value:            []byte("test-value"),
 			ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 		}
-		
+
 		resp, err := client.Put(ctx, req)
 		if err != nil {
 			t.Fatalf("Put failed: %v", err)
 		}
-		
+
 		if !resp.Success {
 			t.Fatalf("Put returned false: %s", resp.ErrorMessage)
 		}
 	})
-	
+
 	t.Run("Get operation", func(t *testing.T) {
 		req := &proto.GetRequest{
 			Key:              "test-key",
 			ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 		}
-		
+
 		resp, err := client.Get(ctx, req)
 		if err != nil {
 			t.Fatalf("Get failed: %v", err)
 		}
-		
+
 		if !resp.Found {
 			t.Fatal("Key not found")
 		}
-		
+
 		if string(resp.Value) != "test-value" {
 			t.Fatalf("Wrong value: expected 'test-value', got '%s'", string(resp.Value))
 		}
 	})
-	
+
 	t.Run("Delete operation", func(t *testing.T) {
 		req := &proto.DeleteRequest{
 			Key:              "test-key",
 			ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 		}
-		
+
 		resp, err := client.Delete(ctx, req)
 		if err != nil {
 			t.Fatalf("Delete failed: %v", err)
 		}
-		
+
 		if !resp.Success {
 			t.Fatalf("Delete returned false: %s", resp.ErrorMessage)
 		}
-		
+
 		// Verify deletion
 		getReq := &proto.GetRequest{
 			Key:              "test-key",
 			ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 		}
-		
+
 		getResp, err := client.Get(ctx, getReq)
 		if err != nil {
 			t.Fatalf("Get after delete failed: %v", err)
 		}
-		
+
 		if getResp.Found {
 			t.Fatal("Key still found after deletion")
 		}
@@ -222,9 +222,9 @@ func TestBasicOperations(t *testing.T) {
 func TestConsistencyLevels(t *testing.T) {
 	cluster := SetupCluster(t, 3)
 	defer cluster.TearDown()
-	
+
 	ctx := context.Background()
-	
+
 	testCases := []struct {
 		name        string
 		consistency proto.ConsistencyLevel
@@ -233,44 +233,44 @@ func TestConsistencyLevels(t *testing.T) {
 		{"QUORUM", proto.ConsistencyLevel_QUORUM},
 		{"ALL", proto.ConsistencyLevel_ALL},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			client := cluster.nodes[0].client
 			key := fmt.Sprintf("consistency-test-%s", tc.name)
 			value := fmt.Sprintf("value-%s", tc.name)
-			
+
 			// Put with specified consistency
 			putReq := &proto.PutRequest{
 				Key:              key,
 				Value:            []byte(value),
 				ConsistencyLevel: tc.consistency,
 			}
-			
+
 			putResp, err := client.Put(ctx, putReq)
 			if err != nil {
 				t.Fatalf("Put failed: %v", err)
 			}
-			
+
 			if !putResp.Success {
 				t.Fatalf("Put failed: %s", putResp.ErrorMessage)
 			}
-			
+
 			// Get with specified consistency
 			getReq := &proto.GetRequest{
 				Key:              key,
 				ConsistencyLevel: tc.consistency,
 			}
-			
+
 			getResp, err := client.Get(ctx, getReq)
 			if err != nil {
 				t.Fatalf("Get failed: %v", err)
 			}
-			
+
 			if !getResp.Found {
 				t.Fatal("Key not found")
 			}
-			
+
 			if string(getResp.Value) != value {
 				t.Fatalf("Wrong value: expected '%s', got '%s'", value, string(getResp.Value))
 			}
@@ -282,9 +282,9 @@ func TestConsistencyLevels(t *testing.T) {
 func TestNodeFailure(t *testing.T) {
 	cluster := SetupCluster(t, 3)
 	defer cluster.TearDown()
-	
+
 	ctx := context.Background()
-	
+
 	// Store data while all nodes are up
 	client := cluster.nodes[0].client
 	putReq := &proto.PutRequest{
@@ -292,7 +292,7 @@ func TestNodeFailure(t *testing.T) {
 		Value:            []byte("test-data"),
 		ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 	}
-	
+
 	resp, err := client.Put(ctx, putReq)
 	if err != nil {
 		t.Fatalf("Initial put failed: %v", err)
@@ -300,43 +300,43 @@ func TestNodeFailure(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("Initial put failed: %s", resp.ErrorMessage)
 	}
-	
+
 	// Kill one node
 	node := cluster.nodes[2]
 	if node.cmd != nil && node.cmd.Process != nil {
 		node.cmd.Process.Kill()
 		node.cmd.Wait()
 	}
-	
+
 	// Wait for failure detection
 	time.Sleep(10 * time.Second)
-	
+
 	// Should still be able to read (2 out of 3 nodes alive)
 	getReq := &proto.GetRequest{
 		Key:              "failure-test",
 		ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 	}
-	
+
 	getResp, err := client.Get(ctx, getReq)
 	if err != nil {
 		t.Fatalf("Get after node failure failed: %v", err)
 	}
-	
+
 	if !getResp.Found {
 		t.Fatal("Data lost after node failure")
 	}
-	
+
 	if string(getResp.Value) != "test-data" {
 		t.Fatalf("Wrong value after node failure: expected 'test-data', got '%s'", string(getResp.Value))
 	}
-	
+
 	// Should still be able to write
 	putReq2 := &proto.PutRequest{
 		Key:              "failure-test-2",
 		Value:            []byte("after-failure"),
 		ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 	}
-	
+
 	putResp2, err := client.Put(ctx, putReq2)
 	if err != nil {
 		t.Fatalf("Put after node failure failed: %v", err)
@@ -350,38 +350,38 @@ func TestNodeFailure(t *testing.T) {
 func TestConcurrentOperations(t *testing.T) {
 	cluster := SetupCluster(t, 3)
 	defer cluster.TearDown()
-	
+
 	ctx := context.Background()
 	numOperations := 100
 	numGoroutines := 10
-	
+
 	var wg sync.WaitGroup
 	errors := make(chan error, numOperations)
-	
+
 	// Concurrent writes
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
-			
+
 			client := cluster.nodes[goroutineID%len(cluster.nodes)].client
-			
+
 			for j := 0; j < numOperations/numGoroutines; j++ {
 				key := fmt.Sprintf("concurrent-key-%d-%d", goroutineID, j)
 				value := fmt.Sprintf("value-%d-%d", goroutineID, j)
-				
+
 				req := &proto.PutRequest{
 					Key:              key,
 					Value:            []byte(value),
 					ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 				}
-				
+
 				resp, err := client.Put(ctx, req)
 				if err != nil {
 					errors <- fmt.Errorf("put %s failed: %v", key, err)
 					return
 				}
-				
+
 				if !resp.Success {
 					errors <- fmt.Errorf("put %s failed: %s", key, resp.ErrorMessage)
 					return
@@ -389,41 +389,41 @@ func TestConcurrentOperations(t *testing.T) {
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 	close(errors)
-	
+
 	// Check for errors
 	for err := range errors {
 		t.Error(err)
 	}
-	
+
 	// Verify all data was written correctly
 	for i := 0; i < numGoroutines; i++ {
 		client := cluster.nodes[i%len(cluster.nodes)].client
-		
+
 		for j := 0; j < numOperations/numGoroutines; j++ {
 			key := fmt.Sprintf("concurrent-key-%d-%d", i, j)
 			expectedValue := fmt.Sprintf("value-%d-%d", i, j)
-			
+
 			req := &proto.GetRequest{
 				Key:              key,
 				ConsistencyLevel: proto.ConsistencyLevel_QUORUM,
 			}
-			
+
 			resp, err := client.Get(ctx, req)
 			if err != nil {
 				t.Errorf("Get %s failed: %v", key, err)
 				continue
 			}
-			
+
 			if !resp.Found {
 				t.Errorf("Key %s not found", key)
 				continue
 			}
-			
+
 			if string(resp.Value) != expectedValue {
-				t.Errorf("Wrong value for %s: expected '%s', got '%s'", 
+				t.Errorf("Wrong value for %s: expected '%s', got '%s'",
 					key, expectedValue, string(resp.Value))
 			}
 		}

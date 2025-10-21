@@ -298,28 +298,28 @@ func (e *Engine) Get(key string) (*Entry, error) {
 func (e *Engine) Delete(key string, vectorClock *consensus.VectorClock) error {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
-	
+
 	if e.closed {
 		return ErrStorageClosed
 	}
-	
+
 	// Create tombstone entry
 	entry := NewDeleteEntry(key, vectorClock)
-	
+
 	// Add tombstone to active MemTable
 	if err := e.activeMemTable.Put(*entry); err != nil {
 		e.stats.WriteErrors++
 		return fmt.Errorf("failed to put delete entry: %v", err)
 	}
-	
+
 	// Update stats
 	e.stats.WriteCount++
-	
+
 	// Check if MemTable needs to be flushed
 	if e.activeMemTable.Size() >= int64(e.config.MemTableMaxSize) {
 		e.triggerFlush()
 	}
-	
+
 	return nil
 }
 
@@ -333,7 +333,7 @@ func (e *Engine) Iterator() (Iterator, error) {
 func (e *Engine) Stats() *StorageStats {
 	e.mutex.RLock()
 	defer e.mutex.RUnlock()
-	
+
 	// Update current stats
 	e.stats.MemTableSize = e.activeMemTable.Size()
 	e.stats.MemTableCount = 1 + len(e.flushingMemTables)
@@ -354,7 +354,7 @@ func (e *Engine) Stats() *StorageStats {
 	}
 	e.stats.SSTableCount = totalSSTables
 	e.stats.TotalDataSize = totalSize
-	
+
 	// Copy stats to avoid race conditions
 	statsCopy := *e.stats
 	return &statsCopy
@@ -491,8 +491,8 @@ func (e *Engine) startBackgroundWorkers() {
 			}
 		}
 	}()
-	
-	// Compaction worker  
+
+	// Compaction worker
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
@@ -572,7 +572,7 @@ func (e *Engine) performFlush() {
 	e.metrics.Storage().FlushCount.Add(1)
 	e.metrics.Storage().FlushDurationNs.Store(tracker.Finish())
 	e.logger.WithFields(map[string]interface{}{
-		"path":            filePath,
+		"path":               filePath,
 		"level0SSTableCount": len(e.sstables[0]),
 		"totalSSTableCount":  totalSSTables,
 	}).Info("SSTable created successfully")
@@ -869,7 +869,7 @@ func (e *Engine) compactSSTablesForLevel(tables []*SSTable, targetLevel int) ([]
 
 	e.metrics.Storage().TombstonesCollected.Add(uint64(tombstonesRemoved))
 	e.logger.WithFields(map[string]interface{}{
-		"processedCount":     processedCount,
+		"processedCount":    processedCount,
 		"tombstonesRemoved": tombstonesRemoved,
 		"newSSTableCount":   len(newSSTables),
 	}).Info("Compaction processing completed")
@@ -946,7 +946,7 @@ func (e *Engine) compactSSTables(tables []*SSTable) (*SSTable, error) {
 
 	e.metrics.Storage().TombstonesCollected.Add(uint64(tombstonesRemoved))
 	e.logger.WithFields(map[string]interface{}{
-		"processedCount":     processedCount,
+		"processedCount":    processedCount,
 		"tombstonesRemoved": tombstonesRemoved,
 	}).Info("Compaction processing completed")
 
