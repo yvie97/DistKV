@@ -1,6 +1,7 @@
 # Binaries
 build/
 /server
+/client
 *.exe
 *.exe~
 
@@ -35,6 +36,7 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
+tmp/
 
 # Generated protobuf files (auto-generated during build)
 proto/*.pb.go

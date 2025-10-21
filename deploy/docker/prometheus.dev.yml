@@ -1,0 +1,50 @@
+# Prometheus configuration for DistKV development environment
+# Optimized for local development with short retention and debug features
+
+global:
+  scrape_interval: 5s       # Scrape more frequently in dev
+  evaluation_interval: 5s   # Evaluate rules more frequently
+  external_labels:
+    cluster: 'distkv-dev'
+    environment: 'development'
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          component: 'prometheus'
+
+  # DistKV development nodes
+  # Note: DistKV currently doesn't expose Prometheus metrics endpoint
+  # This is a placeholder for future implementation
+  - job_name: 'distkv-dev'
+    static_configs:
+      - targets:
+          - 'distkv-dev:8080'
+        labels:
+          component: 'distkv-server'
+          node_id: 'dev-node'
+      - targets:
+          - 'distkv-dev-hot:8080'
+        labels:
+          component: 'distkv-server'
+          node_id: 'dev-node-hot'
+    # Uncomment when metrics endpoint is implemented
+    # metrics_path: '/metrics'
+    # scrape_interval: 5s
+
+  # Redis (if using with-redis profile)
+  - job_name: 'redis'
+    static_configs:
+      - targets: []  # Add redis_exporter if needed
+        # - 'redis_exporter:9121'
+        labels:
+          component: 'redis'
+
+# Development-specific settings
+# - Short retention (1 day)
+# - Frequent scraping (5s)
+# - Debug logging enabled via command line flags

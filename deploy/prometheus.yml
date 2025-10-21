@@ -1,0 +1,64 @@
+# Prometheus configuration for DistKV monitoring
+
+global:
+  scrape_interval: 15s      # How frequently to scrape targets
+  evaluation_interval: 15s  # How frequently to evaluate rules
+  external_labels:
+    cluster: 'distkv-cluster'
+    environment: 'docker'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+# Load rules once and periodically evaluate them
+# rule_files:
+#   - "alerts/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          component: 'prometheus'
+
+  # DistKV nodes
+  # Note: DistKV currently doesn't expose Prometheus metrics endpoint
+  # This is a placeholder for future implementation
+  - job_name: 'distkv-nodes'
+    static_configs:
+      - targets:
+          - 'distkv-node1:8080'
+          - 'distkv-node2:8080'
+          - 'distkv-node3:8080'
+        labels:
+          component: 'distkv-server'
+    # Uncomment when metrics endpoint is implemented
+    # metrics_path: '/metrics'
+    # scrape_interval: 10s
+
+  # Docker containers (if using cAdvisor)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: []  # Add cAdvisor endpoint if available
+        # - 'cadvisor:8080'
+        labels:
+          component: 'cadvisor'
+
+  # Node exporter for host metrics (if available)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: []  # Add node exporter endpoints if available
+        # - 'node-exporter:9100'
+        labels:
+          component: 'node-exporter'
+
+# Future: DistKV metrics to monitor
+# - Storage: read/write ops, latency, cache hit rate
+# - Replication: quorum success rate, conflicts
+# - Gossip: node health, state transitions
+# - Network: connections, bytes transferred
